@@ -4,7 +4,7 @@
 */
 
 /* Define o nome da cache; muda este valor quando alterares ficheiros importantes. */
-const CACHE_NAME = "flight-data-recorder-v1";
+const CACHE_NAME = "flight-data-recorder-v2";
 
 /* Define os ficheiros que devem ficar disponíveis offline. */
 const APP_SHELL = [
@@ -35,11 +35,7 @@ self.addEventListener("activate", (event) => {
   /* Limpa qualquer cache cujo nome já não seja o actual. */
   event.waitUntil(
     caches.keys().then((keys) => {
-      return Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      );
+      return Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)));
     })
   );
 

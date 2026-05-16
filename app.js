@@ -1,50 +1,38 @@
 /*
-  Flight Data Recorder PWA
+  Flight Data Recorder PWA v2
   Este ficheiro trata de:
-  - pedir GPS com navigator.geolocation.watchPosition();
-  - guardar pontos em IndexedDB;
-  - detectar fases do voo por regras configuráveis;
-  - preencher a tabela de log;
-  - exportar dados em CSV e JSON;
-  - registar o service worker para modo offline.
+  - GPS contínuo com navigator.geolocation.watchPosition();
+  - funcionamento offline com service worker;
+  - gravação local em IndexedDB;
+  - detecção de blocks off, taxi, takeoff, initial climb, climb, TOC, cruise, TOD, descent, approach, landing, taxi e blocks on;
+  - cálculo de consumo por fase em lb;
+  - auto-stop no taxi final quando a velocidade estabiliza perto de zero.
 */
 
-/* Define a lista fixa de estados/fases que a app pode registar. */
-const FLIGHT_PHASES = [
-  "taxi",
-  "takeoff roll",
-  "take-off",
-  "take off climb",
-  "climb",
-  "TOC",
-  "cruise",
-  "TOD",
-  "Descent",
-  "Approach",
-  "Landing",
-  "Landing roll",
-  "taxi"
-];
-
-/* Define as configurações padrão do algoritmo de detecção. */
+/* Define as configurações padrão do algoritmo de detecção e do consumo. */
 const DEFAULT_SETTINGS = {
   taxiMaxKt: 20,
-  takeoffRollKt: 35,
-  liftoffKt: 50,
+  takeoffKt: 35,
+  initialClimbKt: 50,
   climbVsFpm: 300,
   descentVsFpm: 300,
   stableSeconds: 45,
   cruiseVsBandFpm: 180,
-  approachHeightFt: 1500,
-  landingRollKt: 35,
-  minGpsIntervalSeconds: 2
+  approachMaxKt: 110,
+  landingMaxKt: 55,
+  autoStopSpeedKt: 2,
+  autoStopStableSeconds: 20,
+  minGpsIntervalSeconds: 2,
+  fuelBeforeTocLbh: 720,
+  fuelCruiseLbh: 600,
+  fuelDescentLbh: 580
 };
 
 /* Define a chave usada para guardar settings no localStorage. */
-const SETTINGS_KEY = "flightDataRecorderSettings";
+const SETTINGS_KEY = "flightDataRecorderSettingsV2";
 
 /* Define a chave usada para guardar o estado resumido da sessão no localStorage. */
-const SESSION_KEY = "flightDataRecorderSession";
+const SESSION_KEY = "flightDataRecorderSessionV2";
 
 /* Guarda o identificador devolvido por watchPosition para podermos parar o GPS. */
 let watchId = null;
@@ -53,20 +41,7 @@ let watchId = null;
 let wakeLock = null;
 
 /* Guarda o estado actual da gravação e do algoritmo. */
-let state = {
-  isRecording: false,
-  currentPhase: "—",
-  startedAt: null,
-  stoppedAt: null,
-  points: [],
-  logs: [],
-  lastLandingReferenceFt: null,
-  lastPhaseChangeMs: 0,
-  hadTakeoff: false,
-  hadToc: false,
-  hadTod: false,
-  hadLanding: false
-};
+let state = createEmptyState();
 
 /* Lê as settings gravadas localmente ou usa os valores padrão. */
 let settings = loadSettings();
@@ -87,6 +62,8 @@ const ui = {
   speedMs: document.getElementById("speedMs"),
   altitudeFt: document.getElementById("altitudeFt"),
   verticalSpeed: document.getElementById("verticalSpeed"),
+  totalFuelLb: document.getElementById("totalFuelLb"),
+  currentFuelRate: document.getElementById("currentFuelRate"),
   logTableBody: document.getElementById("logTableBody"),
   pointCount: document.getElementById("pointCount"),
   lastPoints: document.getElementById("lastPoints"),
@@ -101,27 +78,52 @@ const ui = {
 /* Guarda referências aos campos de settings. */
 const settingInputs = {
   taxiMaxKt: document.getElementById("taxiMaxKt"),
-  takeoffRollKt: document.getElementById("takeoffRollKt"),
-  liftoffKt: document.getElementById("liftoffKt"),
+  takeoffKt: document.getElementById("takeoffKt"),
+  initialClimbKt: document.getElementById("initialClimbKt"),
   climbVsFpm: document.getElementById("climbVsFpm"),
   descentVsFpm: document.getElementById("descentVsFpm"),
   stableSeconds: document.getElementById("stableSeconds"),
   cruiseVsBandFpm: document.getElementById("cruiseVsBandFpm"),
-  approachHeightFt: document.getElementById("approachHeightFt"),
-  landingRollKt: document.getElementById("landingRollKt"),
-  minGpsIntervalSeconds: document.getElementById("minGpsIntervalSeconds")
+  approachMaxKt: document.getElementById("approachMaxKt"),
+  landingMaxKt: document.getElementById("landingMaxKt"),
+  autoStopSpeedKt: document.getElementById("autoStopSpeedKt"),
+  autoStopStableSeconds: document.getElementById("autoStopStableSeconds"),
+  minGpsIntervalSeconds: document.getElementById("minGpsIntervalSeconds"),
+  fuelBeforeTocLbh: document.getElementById("fuelBeforeTocLbh"),
+  fuelCruiseLbh: document.getElementById("fuelCruiseLbh"),
+  fuelDescentLbh: document.getElementById("fuelDescentLbh")
 };
 
 /* Inicializa a aplicação quando o ficheiro é carregado. */
 init();
+
+/* Cria um estado vazio e consistente para uma nova sessão. */
+function createEmptyState() {
+  /* Devolve a estrutura base usada pela aplicação. */
+  return {
+    isRecording: false,
+    currentPhase: "—",
+    startedAt: null,
+    stoppedAt: null,
+    points: [],
+    logs: [],
+    lastPhaseChangeMs: 0,
+    hadTakeoff: false,
+    hadToc: false,
+    hadTod: false,
+    hadLanding: false,
+    autoStopCandidateSinceMs: null,
+    autoStopPrompted: false
+  };
+}
 
 /* Configura listeners, carrega estado guardado e regista o service worker. */
 function init() {
   /* Liga o botão Start à função que inicia a gravação. */
   ui.startBtn.addEventListener("click", startRecording);
 
-  /* Liga o botão Stop à função que pára a gravação. */
-  ui.stopBtn.addEventListener("click", stopRecording);
+  /* Liga o botão Stop à função que pára a gravação e cria blocks on. */
+  ui.stopBtn.addEventListener("click", () => stopRecording("manual"));
 
   /* Liga o botão Reset à função que limpa a sessão. */
   ui.resetBtn.addEventListener("click", resetSession);
@@ -148,10 +150,10 @@ function init() {
   fillSettingsForm();
 
   /* Carrega uma sessão anterior, caso exista. */
-  loadSession();
-
-  /* Actualiza a interface com o estado carregado. */
-  render();
+  loadSession().then(() => {
+    /* Actualiza a interface quando o carregamento terminar. */
+    render();
+  });
 
   /* Regista o service worker para permitir uso offline. */
   registerServiceWorker();
@@ -171,6 +173,21 @@ async function startRecording() {
 
   /* Guarda a hora de início da sessão se ainda não existir. */
   state.startedAt = state.startedAt || new Date().toISOString();
+
+  /* Cria o evento blocks off se esta for uma sessão nova. */
+  if (state.logs.length === 0) {
+    /* Guarda o instante exacto do início de blocks off. */
+    const nowMs = Date.now();
+
+    /* Converte o instante actual para ISO. */
+    const nowIso = new Date(nowMs).toISOString();
+
+    /* Adiciona blocks off como evento sem consumo. */
+    addEventLog("blocks off", nowIso, nowMs);
+
+    /* Inicia a fase de taxi imediatamente após blocks off. */
+    beginPhase("taxi", nowIso, nowMs);
+  }
 
   /* Actualiza botões e indicadores imediatamente. */
   render();
@@ -198,16 +215,34 @@ async function startRecording() {
   setGpsStatus("A procurar", "A aguardar primeiro ponto GPS de alta precisão.");
 }
 
-/* Pára a gravação de pontos GPS. */
-async function stopRecording() {
+/* Pára a gravação de pontos GPS e cria o evento blocks on. */
+async function stopRecording(reason = "manual") {
   /* Cancela watchPosition se estiver activo. */
   if (watchId !== null) {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
   }
 
-  /* Fecha a fase actual com a hora actual. */
-  closeCurrentLog(new Date().toISOString());
+  /* Obtém o último ponto GPS, se existir. */
+  const lastPoint = state.points[state.points.length - 1];
+
+  /* Usa o timestamp do último ponto ou a hora actual. */
+  const stopMs = lastPoint ? lastPoint.timestampMs : Date.now();
+
+  /* Converte o timestamp escolhido para ISO. */
+  const stopIso = new Date(stopMs).toISOString();
+
+  /* Aplica uma correcção final caso a app tenha ficado presa em descent/approach. */
+  applyFinalLandingCorrection(stopIso, stopMs);
+
+  /* Fecha a fase actual com a hora de paragem. */
+  closeCurrentPhase(stopIso, stopMs);
+
+  /* Adiciona o evento blocks on ao log. */
+  addEventLog("blocks on", stopIso, stopMs);
+
+  /* Marca a fase visível como blocks on. */
+  state.currentPhase = "blocks on";
 
   /* Marca a sessão como parada. */
   state.isRecording = false;
@@ -223,6 +258,11 @@ async function stopRecording() {
 
   /* Actualiza a interface. */
   render();
+
+  /* Mostra mensagem curta quando o stop veio do auto-stop. */
+  if (reason === "auto") {
+    setGpsStatus("Parado", "Auto-stop confirmado. Blocks on criado.");
+  }
 }
 
 /* Limpa a sessão actual depois de confirmação do utilizador. */
@@ -234,25 +274,16 @@ async function resetSession() {
   if (!ok) return;
 
   /* Pára a gravação se estiver activa. */
-  if (state.isRecording) {
-    await stopRecording();
+  if (state.isRecording && watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
   }
 
+  /* Liberta o Wake Lock, se existir. */
+  await releaseWakeLock();
+
   /* Limpa o estado em memória. */
-  state = {
-    isRecording: false,
-    currentPhase: "—",
-    startedAt: null,
-    stoppedAt: null,
-    points: [],
-    logs: [],
-    lastLandingReferenceFt: null,
-    lastPhaseChangeMs: 0,
-    hadTakeoff: false,
-    hadToc: false,
-    hadTod: false,
-    hadLanding: false
-  };
+  state = createEmptyState();
 
   /* Remove o resumo da sessão do localStorage. */
   localStorage.removeItem(SESSION_KEY);
@@ -270,9 +301,7 @@ async function handlePosition(position) {
   const point = normalisePosition(position);
 
   /* Ignora pontos recebidos demasiado perto do anterior para reduzir ruído. */
-  if (shouldSkipPoint(point)) {
-    return;
-  }
+  if (shouldSkipPoint(point)) return;
 
   /* Adiciona o ponto ao array em memória. */
   state.points.push(point);
@@ -282,6 +311,9 @@ async function handlePosition(position) {
 
   /* Detecta a fase do voo com base no ponto novo e no histórico. */
   detectPhase(point);
+
+  /* Avalia auto-stop depois da detecção de fase. */
+  await checkAutoStop(point);
 
   /* Guarda o resumo da sessão no localStorage. */
   saveSession();
@@ -365,9 +397,7 @@ function calculateVerticalSpeedFpm(timestampMs, altitudeFt) {
   const previous = state.points[state.points.length - 1];
 
   /* Devolve null se não houver ponto anterior ou se faltar altitude. */
-  if (!previous || altitudeFt === null || previous.altitudeFt === null) {
-    return null;
-  }
+  if (!previous || altitudeFt === null || previous.altitudeFt === null) return null;
 
   /* Calcula diferença de tempo em minutos. */
   const diffMinutes = (timestampMs - previous.timestampMs) / 60000;
@@ -393,151 +423,161 @@ function detectPhase(point) {
   /* Lê a razão vertical com fallback para zero quando vier vazia. */
   const vsFpm = point.verticalSpeedFpm ?? 0;
 
-  /* Detecta se a altitude está disponível. */
-  const hasAltitude = point.altitudeFt !== null;
-
-  /* Inicializa a referência de aterragem com a primeira altitude baixa conhecida. */
-  updateLandingReference(point);
-
-  /* Começa por assumir que a fase não muda. */
-  let next = current === "—" ? "taxi" : current;
-
-  /* Detecta início de corrida de descolagem a partir de taxi. */
-  if (next === "taxi" && speedKt >= settings.takeoffRollKt && !state.hadTakeoff) {
-    next = "takeoff roll";
-  }
-
-  /* Detecta take-off quando há velocidade suficiente e subida positiva. */
-  if (
-    next === "takeoff roll" &&
-    speedKt >= settings.liftoffKt &&
-    (vsFpm >= settings.climbVsFpm || !hasAltitude)
-  ) {
-    next = "take-off";
+  /* Detecta takeoff a partir do taxi inicial. */
+  if (current === "taxi" && !state.hadTakeoff && speedKt >= settings.takeoffKt) {
+    setPhase("takeoff", point.timeIso, point.timestampMs);
     state.hadTakeoff = true;
+    return;
   }
 
-  /* Transita de take-off para subida inicial. */
-  if (next === "take-off" && enoughTimeInCurrentPhase(point, 10)) {
-    next = "take off climb";
-  }
-
-  /* Transita de subida inicial para climb quando a subida é sustentada. */
+  /* Detecta initial climb após takeoff com velocidade suficiente e subida positiva. */
   if (
-    next === "take off climb" &&
-    isTrendSustained("climb", settings.stableSeconds)
+    current === "takeoff" &&
+    speedKt >= settings.initialClimbKt &&
+    (vsFpm >= settings.climbVsFpm || enoughTimeInCurrentPhase(point, 12))
   ) {
-    next = "climb";
+    setPhase("initial climb", point.timeIso, point.timestampMs);
+    return;
+  }
+
+  /* Detecta climb quando a subida fica sustentada. */
+  if (current === "initial climb" && isTrendSustained("climb", settings.stableSeconds, point.timestampMs)) {
+    setPhase("climb", point.timeIso, point.timestampMs);
+    return;
   }
 
   /* Detecta TOC quando deixa de haver subida sustentada depois de climb. */
-  if (
-    next === "climb" &&
-    !state.hadToc &&
-    isTrendSustained("level", settings.stableSeconds)
-  ) {
-    next = "TOC";
+  if (current === "climb" && !state.hadToc && isTrendSustained("level", settings.stableSeconds, point.timestampMs)) {
+    addEventThenPhase("TOC", "cruise", point.timeIso, point.timestampMs);
     state.hadToc = true;
+    return;
   }
 
-  /* Transita automaticamente de TOC para cruise após alguns segundos. */
-  if (next === "TOC" && enoughTimeInCurrentPhase(point, 20)) {
-    next = "cruise";
+  /* Permite detectar TOC mesmo se a app saltou initial climb e ficou em takeoff. */
+  if ((current === "takeoff" || current === "initial climb") && !state.hadToc && isTrendSustained("level", settings.stableSeconds, point.timestampMs)) {
+    addEventThenPhase("TOC", "cruise", point.timeIso, point.timestampMs);
+    state.hadToc = true;
+    return;
   }
 
-  /* Detecta TOD quando começa descida sustentada depois de cruzeiro. */
-  if (
-    (next === "cruise" || next === "TOC") &&
-    !state.hadTod &&
-    isTrendSustained("descent", settings.stableSeconds)
-  ) {
-    next = "TOD";
+  /* Detecta TOD quando começa descida sustentada depois de cruise. */
+  if (current === "cruise" && !state.hadTod && isTrendSustained("descent", settings.stableSeconds, point.timestampMs)) {
+    addEventThenPhase("TOD", "descent", point.timeIso, point.timestampMs);
     state.hadTod = true;
+    return;
   }
 
-  /* Transita automaticamente de TOD para Descent após alguns segundos. */
-  if (next === "TOD" && enoughTimeInCurrentPhase(point, 20)) {
-    next = "Descent";
+  /* Detecta descent mesmo que TOC/cruise não tenham sido detectados, se já houve takeoff. */
+  if (!state.hadTod && state.hadTakeoff && isTrendSustained("descent", settings.stableSeconds, point.timestampMs)) {
+    addEventThenPhase("TOD", "descent", point.timeIso, point.timestampMs);
+    state.hadTod = true;
+    return;
   }
 
-  /* Detecta Approach perto da referência de aterragem durante descida. */
+  /* Detecta approach sem depender da altitude do aeródromo de partida. */
   if (
-    next === "Descent" &&
-    isNearLandingReference(point) &&
-    speedKt > settings.landingRollKt
+    current === "descent" &&
+    state.hadTod &&
+    speedKt > settings.landingMaxKt &&
+    speedKt <= settings.approachMaxKt
   ) {
-    next = "Approach";
+    setPhase("approach", point.timeIso, point.timestampMs);
+    return;
   }
 
-  /* Detecta Landing quando há velocidade baixa e proximidade da referência de aterragem. */
+  /* Detecta landing directamente de descent ou approach quando a velocidade baixa bastante depois de TOD. */
   if (
-    (next === "Approach" || next === "Descent") &&
-    speedKt <= settings.landingRollKt &&
-    isNearLandingReference(point)
+    (current === "descent" || current === "approach") &&
+    state.hadTod &&
+    speedKt <= settings.landingMaxKt
   ) {
-    next = "Landing";
+    setPhase("landing", point.timeIso, point.timestampMs);
+    state.hadLanding = true;
+    return;
+  }
+
+  /* Detecta taxi final quando a velocidade fica abaixo do limite de taxi depois da aterragem. */
+  if (
+    current === "landing" &&
+    state.hadLanding &&
+    speedKt <= settings.taxiMaxKt &&
+    enoughTimeInCurrentPhase(point, 8)
+  ) {
+    setPhase("taxi", point.timeIso, point.timestampMs);
+    return;
+  }
+}
+
+/* Aplica uma correcção final caso o voo termine com baixa velocidade mas a fase continue errada. */
+function applyFinalLandingCorrection(stopIso, stopMs) {
+  /* Obtém o último ponto GPS disponível. */
+  const last = state.points[state.points.length - 1];
+
+  /* Sai se não houver ponto GPS. */
+  if (!last) return;
+
+  /* Lê a velocidade com fallback para zero. */
+  const speedKt = last.speedKt ?? 0;
+
+  /* Só corrige se já houve descida ou TOD. */
+  if (!state.hadTod) return;
+
+  /* Corrige descent/approach para landing quando o avião já está muito lento. */
+  if ((state.currentPhase === "descent" || state.currentPhase === "approach") && speedKt <= settings.landingMaxKt) {
+    setPhase("landing", stopIso, stopMs);
     state.hadLanding = true;
   }
 
-  /* Transita de Landing para Landing roll após alguns segundos. */
-  if (next === "Landing" && enoughTimeInCurrentPhase(point, 10)) {
-    next = "Landing roll";
-  }
-
-  /* Termina em taxi quando a velocidade estabiliza abaixo do taxi max depois da aterragem. */
-  if (
-    next === "Landing roll" &&
-    speedKt <= settings.taxiMaxKt &&
-    enoughTimeInCurrentPhase(point, settings.stableSeconds)
-  ) {
-    next = "taxi";
-  }
-
-  /* Aplica a mudança de fase, se houver alteração. */
-  if (next !== current) {
-    setPhase(next, point.timeIso, point.timestampMs);
+  /* Corrige landing para taxi quando a velocidade está dentro do limite de taxi. */
+  if (state.currentPhase === "landing" && speedKt <= settings.taxiMaxKt) {
+    setPhase("taxi", stopIso, stopMs);
   }
 }
 
-/* Actualiza a referência de altitude da aterragem quando faz sentido. */
-function updateLandingReference(point) {
-  /* Aborta se a altitude GPS não existir. */
-  if (point.altitudeFt === null) return;
+/* Verifica se deve perguntar se o voo terminou no taxi final. */
+async function checkAutoStop(point) {
+  /* Lê a velocidade com fallback para um valor alto quando não há speed. */
+  const speedKt = point.speedKt ?? 999;
 
-  /* Define a primeira referência antes da descolagem. */
-  if (!state.hadTakeoff && state.lastLandingReferenceFt === null) {
-    state.lastLandingReferenceFt = point.altitudeFt;
+  /* Só usa auto-stop depois de landing, no taxi final. */
+  const isFinalTaxi = state.currentPhase === "taxi" && state.hadLanding;
+
+  /* Reinicia o candidato se não estamos em taxi final ou se a velocidade subiu. */
+  if (!isFinalTaxi || speedKt > settings.autoStopSpeedKt) {
+    state.autoStopCandidateSinceMs = null;
+    state.autoStopPrompted = false;
+    return;
   }
 
-  /* Actualiza a referência no taxi inicial para aproximar do aeródromo de partida. */
-  if (!state.hadTakeoff && state.currentPhase === "taxi") {
-    state.lastLandingReferenceFt = smoothValue(state.lastLandingReferenceFt, point.altitudeFt, 0.15);
+  /* Marca o início da paragem se ainda não estava marcado. */
+  if (state.autoStopCandidateSinceMs === null) {
+    state.autoStopCandidateSinceMs = point.timestampMs;
+    return;
   }
 
-  /* Durante approach/landing, aproxima a referência à altitude observada no fim. */
-  if (state.hadTod && (state.currentPhase === "Approach" || state.currentPhase === "Landing roll")) {
-    state.lastLandingReferenceFt = smoothValue(state.lastLandingReferenceFt, point.altitudeFt, 0.08);
-  }
-}
+  /* Calcula há quanto tempo a velocidade está perto de zero. */
+  const stoppedSeconds = (point.timestampMs - state.autoStopCandidateSinceMs) / 1000;
 
-/* Verifica se a aeronave está perto da altitude de referência de aterragem/descolagem. */
-function isNearLandingReference(point) {
-  /* Quando não há altitude, usa velocidade baixa como aproximação fraca. */
-  if (point.altitudeFt === null || state.lastLandingReferenceFt === null) {
-    return (point.speedKt ?? 999) <= settings.landingRollKt;
-  }
+  /* Sai se ainda não passou o tempo estável definido. */
+  if (stoppedSeconds < settings.autoStopStableSeconds) return;
 
-  /* Calcula altura relativa à referência. */
-  const heightFt = Math.abs(point.altitudeFt - state.lastLandingReferenceFt);
+  /* Evita perguntar repetidamente. */
+  if (state.autoStopPrompted) return;
 
-  /* Considera perto se estiver abaixo da altura configurada. */
-  return heightFt <= settings.approachHeightFt;
+  /* Marca que a pergunta já foi feita. */
+  state.autoStopPrompted = true;
+
+  /* Pergunta ao utilizador se o voo terminou. */
+  const ended = window.confirm("A velocidade está perto de zero no taxi final. O voo terminou e queres fazer Blocks on?");
+
+  /* Se o utilizador confirmou, pára a gravação e cria blocks on. */
+  if (ended) await stopRecording("auto");
 }
 
 /* Confirma tendências de subida, nível ou descida durante uma janela temporal. */
-function isTrendSustained(type, seconds) {
+function isTrendSustained(type, seconds, referenceMs) {
   /* Calcula o instante mínimo dos pontos a analisar. */
-  const minTime = Date.now() - seconds * 1000;
+  const minTime = referenceMs - seconds * 1000;
 
   /* Filtra pontos recentes que tenham velocidade vertical válida. */
   const recent = state.points.filter((p) => p.timestampMs >= minTime && p.verticalSpeedFpm !== null);
@@ -570,11 +610,43 @@ function enoughTimeInCurrentPhase(point, seconds) {
   return point.timestampMs - state.lastPhaseChangeMs >= seconds * 1000;
 }
 
+/* Adiciona uma linha de evento sem duração nem consumo. */
+function addEventLog(status, timeIso, timestampMs) {
+  /* Cria a linha de evento no log. */
+  state.logs.push({
+    status,
+    startTime: timeIso,
+    startMs: timestampMs,
+    endTime: timeIso,
+    endMs: timestampMs,
+    rateLbh: 0,
+    isEvent: true
+  });
+}
+
+/* Fecha a fase actual, adiciona um evento e começa uma nova fase. */
+function addEventThenPhase(eventStatus, nextPhase, timeIso, timestampMs) {
+  /* Fecha a fase em curso no instante do evento. */
+  closeCurrentPhase(timeIso, timestampMs);
+
+  /* Adiciona o evento ao log. */
+  addEventLog(eventStatus, timeIso, timestampMs);
+
+  /* Começa a fase seguinte no mesmo instante. */
+  beginPhase(nextPhase, timeIso, timestampMs);
+}
+
 /* Muda a fase actual e actualiza a tabela de log. */
 function setPhase(phase, timeIso, timestampMs) {
   /* Fecha a linha de log anterior com o início da nova fase. */
-  closeCurrentLog(timeIso);
+  closeCurrentPhase(timeIso, timestampMs);
 
+  /* Começa a nova fase. */
+  beginPhase(phase, timeIso, timestampMs);
+}
+
+/* Começa uma nova fase com consumo configurado. */
+function beginPhase(phase, timeIso, timestampMs) {
   /* Define a nova fase actual. */
   state.currentPhase = phase;
 
@@ -585,20 +657,81 @@ function setPhase(phase, timeIso, timestampMs) {
   state.logs.push({
     status: phase,
     startTime: timeIso,
-    endTime: null
+    startMs: timestampMs,
+    endTime: null,
+    endMs: null,
+    rateLbh: getFuelRateForPhase(phase),
+    isEvent: false
   });
 }
 
-/* Fecha a linha de log aberta, se existir. */
-function closeCurrentLog(timeIso) {
+/* Fecha a linha de fase aberta, se existir. */
+function closeCurrentPhase(timeIso, timestampMs) {
   /* Obtém a última linha do log. */
   const lastLog = state.logs[state.logs.length - 1];
 
-  /* Não faz nada se não houver linha ou se já estiver fechada. */
-  if (!lastLog || lastLog.endTime) return;
+  /* Não faz nada se não houver linha, se for evento, ou se já estiver fechada. */
+  if (!lastLog || lastLog.isEvent || lastLog.endTime) return;
 
   /* Fecha a linha com a hora indicada. */
   lastLog.endTime = timeIso;
+
+  /* Fecha a linha com o timestamp indicado. */
+  lastLog.endMs = timestampMs;
+}
+
+/* Devolve a razão de consumo para uma fase nova. */
+function getFuelRateForPhase(phase) {
+  /* Eventos não têm consumo. */
+  if (phase === "blocks off" || phase === "blocks on" || phase === "TOC" || phase === "TOD") return 0;
+
+  /* Fases antes de TOC usam 720 lb/h por defeito. */
+  if (!state.hadToc && ["taxi", "takeoff", "initial climb", "climb"].includes(phase)) return settings.fuelBeforeTocLbh;
+
+  /* Cruise usa 600 lb/h por defeito. */
+  if (phase === "cruise") return settings.fuelCruiseLbh;
+
+  /* Fases depois de TOD usam 580 lb/h por defeito. */
+  if (["descent", "approach", "landing", "taxi"].includes(phase)) return settings.fuelDescentLbh;
+
+  /* Usa zero para qualquer fase desconhecida. */
+  return 0;
+}
+
+/* Calcula o consumo de uma linha de log. */
+function calculateLogConsumptionLb(log) {
+  /* Eventos têm consumo zero. */
+  if (log.isEvent) return 0;
+
+  /* Usa o fim da fase se existir, caso contrário usa o último ponto ou agora. */
+  const endMs = log.endMs || getCurrentCalculationMs();
+
+  /* Evita durações negativas. */
+  const durationMs = Math.max(0, endMs - log.startMs);
+
+  /* Converte duração para horas. */
+  const hours = durationMs / 3600000;
+
+  /* Multiplica horas pelo consumo horário da fase. */
+  return hours * (log.rateLbh || 0);
+}
+
+/* Calcula o consumo total actual da sessão. */
+function calculateTotalFuelLb() {
+  /* Soma o consumo de todas as linhas do log. */
+  return state.logs.reduce((sum, log) => sum + calculateLogConsumptionLb(log), 0);
+}
+
+/* Obtém o timestamp a usar para consumos dinâmicos. */
+function getCurrentCalculationMs() {
+  /* Obtém o último ponto GPS disponível. */
+  const last = state.points[state.points.length - 1];
+
+  /* Usa o timestamp do último ponto se a app está a gravar. */
+  if (state.isRecording && last) return last.timestampMs;
+
+  /* Usa agora como fallback. */
+  return Date.now();
 }
 
 /* Actualiza a interface completa com base no estado actual. */
@@ -619,7 +752,7 @@ function render() {
 
   /* Actualiza métricas se já houver GPS. */
   if (last) {
-    ui.gpsStatus.textContent = "Activo";
+    ui.gpsStatus.textContent = state.isRecording ? "Activo" : "Parado";
     ui.gpsDetails.textContent = `Precisão ${formatNumber(last.accuracyM, 0)} m · ${formatTime(last.timeIso)}`;
     ui.speedKt.textContent = formatNumber(last.speedKt, 1);
     ui.speedMs.textContent = `${formatNumber(last.speedMs, 1)} m/s`;
@@ -633,11 +766,29 @@ function render() {
     ui.verticalSpeed.textContent = "VS — ft/min";
   }
 
+  /* Actualiza total de combustível. */
+  ui.totalFuelLb.textContent = formatNumber(calculateTotalFuelLb(), 1);
+
+  /* Actualiza fuel rate actual. */
+  ui.currentFuelRate.textContent = `Rate ${formatNumber(getCurrentFuelRate(), 0)} lb/h`;
+
   /* Actualiza a tabela de fases. */
   renderLogTable();
 
   /* Actualiza lista de pontos recentes. */
   renderLastPoints();
+}
+
+/* Obtém a razão de consumo da linha aberta actual. */
+function getCurrentFuelRate() {
+  /* Obtém a última linha do log. */
+  const lastLog = state.logs[state.logs.length - 1];
+
+  /* Devolve zero se não houver linha ou se a última linha for evento. */
+  if (!lastLog || lastLog.isEvent) return 0;
+
+  /* Devolve a razão de consumo da fase actual. */
+  return lastLog.rateLbh || 0;
 }
 
 /* Mostra a tabela de log de fases. */
@@ -656,10 +807,11 @@ function renderLogTable() {
   /* Cria uma linha por cada entrada no log. */
   for (const log of state.logs) {
     const row = document.createElement("tr");
+    const consumption = calculateLogConsumptionLb(log);
     row.innerHTML = `
       <td>${escapeHtml(log.status)}</td>
       <td>${formatTime(log.startTime)}</td>
-      <td>${log.endTime ? formatTime(log.endTime) : "—"}</td>
+      <td>${formatNumber(consumption, 1)} lb</td>
     `;
     ui.logTableBody.appendChild(row);
   }
@@ -692,14 +844,8 @@ function renderLastPoints() {
 
 /* Cria uma descrição curta do estado do voo. */
 function buildFlightDetails(point) {
-  /* Calcula a altura relativa se houver referência. */
-  const relFt =
-    point.altitudeFt !== null && state.lastLandingReferenceFt !== null
-      ? point.altitudeFt - state.lastLandingReferenceFt
-      : null;
-
   /* Devolve uma linha resumida para a UI. */
-  return `Alt ref ${formatNumber(relFt, 0)} ft · Heading ${formatNumber(point.headingDeg, 0)}°`;
+  return `Heading ${formatNumber(point.headingDeg, 0)}° · TOC ${state.hadToc ? "sim" : "não"} · TOD ${state.hadTod ? "sim" : "não"}`;
 }
 
 /* Define explicitamente o estado GPS na UI. */
@@ -801,7 +947,7 @@ async function loadSession() {
 
     /* Restaura o estado com fallback para valores seguros. */
     state = {
-      ...state,
+      ...createEmptyState(),
       ...saved,
       isRecording: false
     };
@@ -810,9 +956,7 @@ async function loadSession() {
     const pointsFromDb = await getAllPointsFromDb();
 
     /* Usa IndexedDB se houver pontos guardados. */
-    if (pointsFromDb.length > 0) {
-      state.points = pointsFromDb;
-    }
+    if (pointsFromDb.length > 0) state.points = pointsFromDb;
   } catch {
     /* Ignora sessões inválidas para não bloquear a app. */
   }
@@ -821,11 +965,17 @@ async function loadSession() {
 /* Exporta a tabela de fases para CSV. */
 function exportCsv() {
   /* Define o cabeçalho do CSV. */
-  const rows = [["status", "start_time", "end_time"]];
+  const rows = [["status", "start_time", "consumption_lb", "rate_lb_per_hour", "end_time"]];
 
   /* Adiciona cada linha de log ao CSV. */
   for (const log of state.logs) {
-    rows.push([log.status, log.startTime, log.endTime || ""]);
+    rows.push([
+      log.status,
+      log.startTime,
+      calculateLogConsumptionLb(log).toFixed(1),
+      log.rateLbh || 0,
+      log.endTime || ""
+    ]);
   }
 
   /* Converte as linhas para texto CSV. */
@@ -841,7 +991,12 @@ function exportJson() {
   const payload = {
     exportedAt: new Date().toISOString(),
     settings,
-    session: state
+    totalFuelLb: calculateTotalFuelLb(),
+    session: state,
+    computedLogs: state.logs.map((log) => ({
+      ...log,
+      consumptionLb: calculateLogConsumptionLb(log)
+    }))
   };
 
   /* Converte o objecto para JSON legível. */
@@ -896,9 +1051,7 @@ function csvCell(value) {
 /* Pede Wake Lock para manter o ecrã activo, quando suportado. */
 async function requestWakeLock() {
   /* Verifica se o browser suporta Wake Lock. */
-  if (!("wakeLock" in navigator)) {
-    return;
-  }
+  if (!("wakeLock" in navigator)) return;
 
   /* Tenta pedir bloqueio de ecrã. */
   try {
@@ -932,9 +1085,7 @@ async function releaseWakeLock() {
 /* Volta a pedir Wake Lock quando a página volta a ficar visível. */
 document.addEventListener("visibilitychange", async () => {
   /* Só tenta recuperar Wake Lock se a app estiver a gravar e visível. */
-  if (state.isRecording && document.visibilityState === "visible") {
-    await requestWakeLock();
-  }
+  if (state.isRecording && document.visibilityState === "visible") await requestWakeLock();
 });
 
 /* Regista o service worker para PWA offline. */
@@ -955,7 +1106,7 @@ function msToKnots(ms) {
   /* Devolve null quando a velocidade não vem no GPS. */
   if (ms === null || ms === undefined || Number.isNaN(ms)) return null;
 
-  /* Usa o factor oficial aproximado de m/s para kt. */
+  /* Usa o factor aproximado de m/s para kt. */
   return ms * 1.94384449;
 }
 
@@ -978,15 +1129,6 @@ function average(values) {
 
   /* Divide pela quantidade de valores. */
   return total / values.length;
-}
-
-/* Suaviza um valor anterior com um valor novo. */
-function smoothValue(previous, next, weight) {
-  /* Usa o valor novo quando ainda não há anterior. */
-  if (previous === null || previous === undefined) return next;
-
-  /* Aplica média exponencial simples. */
-  return previous * (1 - weight) + next * weight;
 }
 
 /* Formata números para a UI. */
@@ -1045,7 +1187,7 @@ function openDb() {
   /* Devolve uma Promise para usar com async/await. */
   return new Promise((resolve, reject) => {
     /* Abre ou cria a base de dados local. */
-    const request = indexedDB.open("flight-data-recorder-db", 1);
+    const request = indexedDB.open("flight-data-recorder-db-v2", 1);
 
     /* Cria a store na primeira versão da base de dados. */
     request.onupgradeneeded = () => {

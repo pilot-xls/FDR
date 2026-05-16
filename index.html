@@ -5,7 +5,7 @@
   <!-- Define a codificação de caracteres da página. -->
   <meta charset="utf-8">
 
-  <!-- Ajusta a página para ecrãs móveis e impede zoom inicial estranho em telemóveis. -->
+  <!-- Ajusta a página para ecrãs móveis. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 
   <!-- Define a cor da barra do browser em dispositivos compatíveis. -->
@@ -27,11 +27,14 @@
 <body>
   <!-- Container principal da aplicação. -->
   <main class="app-shell">
-    <!-- Cabeçalho simples com nome e estado da PWA. -->
+    <!-- Cabeçalho simples com nome e estado da gravação. -->
     <header class="topbar">
-      <!-- Título principal da app. -->
+      <!-- Bloco de título. -->
       <div>
+        <!-- Etiqueta curta do tipo de app. -->
         <p class="eyebrow">PWA offline</p>
+
+        <!-- Título principal da app. -->
         <h1>Flight Data Recorder</h1>
       </div>
 
@@ -48,8 +51,8 @@
           <!-- Botão que inicia a gravação GPS. -->
           <button id="startBtn" class="btn btn-primary">Start</button>
 
-          <!-- Botão que pára a gravação GPS. -->
-          <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
+          <!-- Botão que pára a gravação GPS e cria o evento blocks on. -->
+          <button id="stopBtn" class="btn btn-secondary" disabled>Stop / Blocks on</button>
 
           <!-- Botão que limpa a sessão actual. -->
           <button id="resetBtn" class="btn btn-danger">Reset</button>
@@ -90,6 +93,13 @@
           <h2><span id="altitudeFt">—</span> ft</h2>
           <p id="verticalSpeed" class="metric-small">VS — ft/min</p>
         </article>
+
+        <!-- Cartão do combustível consumido. -->
+        <article class="card metric-card">
+          <p class="metric-label">Fuel used</p>
+          <h2><span id="totalFuelLb">0.0</span> lb</h2>
+          <p id="currentFuelRate" class="metric-small">Rate — lb/h</p>
+        </article>
       </section>
 
       <!-- Cartão com a tabela de log de fases. -->
@@ -114,8 +124,8 @@
             <thead>
               <tr>
                 <th>Status</th>
-                <th>Start time</th>
-                <th>End time</th>
+                <th>Start Time</th>
+                <th>Consumption</th>
               </tr>
             </thead>
             <tbody id="logTableBody">
@@ -144,78 +154,90 @@
       <section class="card">
         <h2>Settings</h2>
         <p class="hint">
-          Ajusta estes valores ao teu tipo de avião. Estes limiares controlam quando a app muda de fase.
+          Ajusta estes valores ao tipo de avião. O algoritmo usa GPS, velocidade e tendência vertical.
         </p>
 
         <!-- Grelha de campos de configuração. -->
         <div class="settings-grid">
-          <!-- Velocidade abaixo da qual consideramos taxi/solo. -->
           <label>
             Taxi max speed (kt)
             <input id="taxiMaxKt" type="number" min="1" step="1">
           </label>
 
-          <!-- Velocidade acima da qual começa a corrida de descolagem. -->
           <label>
-            Takeoff roll min speed (kt)
-            <input id="takeoffRollKt" type="number" min="1" step="1">
+            Takeoff speed min (kt)
+            <input id="takeoffKt" type="number" min="1" step="1">
           </label>
 
-          <!-- Velocidade mínima para considerar rotação/descolagem. -->
           <label>
-            Liftoff min speed (kt)
-            <input id="liftoffKt" type="number" min="1" step="1">
+            Initial climb speed min (kt)
+            <input id="initialClimbKt" type="number" min="1" step="1">
           </label>
 
-          <!-- Razão de subida mínima para considerar subida sustentada. -->
           <label>
             Climb VS min (ft/min)
             <input id="climbVsFpm" type="number" min="50" step="10">
           </label>
 
-          <!-- Razão de descida mínima para detectar descida sustentada. -->
           <label>
             Descent VS min (ft/min)
             <input id="descentVsFpm" type="number" min="50" step="10">
           </label>
 
-          <!-- Tempo necessário para confirmar uma mudança de tendência. -->
           <label>
             Stable time (seconds)
             <input id="stableSeconds" type="number" min="10" step="5">
           </label>
 
-          <!-- Limite de VS para identificar cruzeiro/TOC. -->
           <label>
             Cruise VS band (ft/min)
             <input id="cruiseVsBandFpm" type="number" min="50" step="10">
           </label>
 
-          <!-- Altura aproximada para considerar aproximação. -->
           <label>
-            Approach height above landing ref (ft)
-            <input id="approachHeightFt" type="number" min="100" step="50">
+            Approach max speed (kt)
+            <input id="approachMaxKt" type="number" min="30" step="1">
           </label>
 
-          <!-- Velocidade abaixo da qual consideramos aterragem/rolagem. -->
           <label>
-            Landing roll max speed (kt)
-            <input id="landingRollKt" type="number" min="1" step="1">
+            Landing max speed (kt)
+            <input id="landingMaxKt" type="number" min="10" step="1">
           </label>
 
-          <!-- Intervalo mínimo entre pontos usados no cálculo. -->
+          <label>
+            Auto-stop speed (kt)
+            <input id="autoStopSpeedKt" type="number" min="0" step="0.5">
+          </label>
+
+          <label>
+            Auto-stop stable time (seconds)
+            <input id="autoStopStableSeconds" type="number" min="5" step="5">
+          </label>
+
           <label>
             Minimum GPS interval (seconds)
             <input id="minGpsIntervalSeconds" type="number" min="1" step="1">
+          </label>
+
+          <label>
+            Fuel until TOC (lb/h)
+            <input id="fuelBeforeTocLbh" type="number" min="0" step="10">
+          </label>
+
+          <label>
+            Fuel cruise (lb/h)
+            <input id="fuelCruiseLbh" type="number" min="0" step="10">
+          </label>
+
+          <label>
+            Fuel descent/approach (lb/h)
+            <input id="fuelDescentLbh" type="number" min="0" step="10">
           </label>
         </div>
 
         <!-- Botões de gestão das definições. -->
         <div class="controls settings-actions">
-          <!-- Guarda as definições no armazenamento local. -->
           <button id="saveSettingsBtn" class="btn btn-primary">Guardar settings</button>
-
-          <!-- Repõe as definições recomendadas. -->
           <button id="defaultSettingsBtn" class="btn btn-secondary">Repor defaults</button>
         </div>
       </section>
@@ -224,26 +246,25 @@
       <section class="card">
         <h2>Como a detecção funciona</h2>
         <p class="hint">
-          A app usa apenas GPS: timestamp, latitude, longitude, altitude e velocidade. Altitude e velocidade podem vir
-          vazias em alguns dispositivos; quando isso acontece, a detecção fica menos precisa.
+          A app não usa sensores nativos. Usa apenas GPS via <code>navigator.geolocation.watchPosition()</code>.
+          A detecção de landing foi alterada para não depender da altitude do aeródromo de partida.
         </p>
         <ul class="notes">
-          <li><strong>Taxi:</strong> velocidade baixa em solo.</li>
-          <li><strong>Takeoff roll:</strong> velocidade acima do limite de corrida.</li>
-          <li><strong>Take-off:</strong> subida inicial detectada por altitude/VS.</li>
-          <li><strong>TOC:</strong> subida deixa de ser sustentada e entra em cruzeiro.</li>
-          <li><strong>TOD:</strong> descida sustentada começa depois do cruzeiro.</li>
-          <li><strong>Landing:</strong> velocidade reduz e altitude estabiliza perto da referência de aterragem.</li>
+          <li><strong>Blocks off:</strong> criado quando carregas em Start.</li>
+          <li><strong>Taxi:</strong> fase activa logo após blocks off.</li>
+          <li><strong>Takeoff:</strong> velocidade acima do limite de descolagem.</li>
+          <li><strong>Initial climb / climb:</strong> subida positiva e sustentada.</li>
+          <li><strong>TOC:</strong> evento criado quando a subida deixa de ser sustentada.</li>
+          <li><strong>TOD:</strong> evento criado quando começa a descida sustentada após cruise.</li>
+          <li><strong>Approach / landing:</strong> usa velocidade e fase de descida; já não exige altitude de destino igual à partida.</li>
+          <li><strong>Auto-stop:</strong> no taxi final, se a velocidade ficar perto de zero, a app pergunta se o voo terminou.</li>
         </ul>
       </section>
     </section>
 
     <!-- Navegação inferior entre separadores. -->
     <nav class="bottom-nav" aria-label="Navegação principal">
-      <!-- Abre o separador de voo. -->
       <button id="flightTabBtn" class="nav-btn active">Flight</button>
-
-      <!-- Abre o separador de settings. -->
       <button id="settingsTabBtn" class="nav-btn">Settings</button>
     </nav>
   </main>

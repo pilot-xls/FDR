@@ -18,9 +18,7 @@
 }
 
 /* Aplica box-sizing previsível a todos os elementos. */
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 /* Remove margens do body e define o fundo geral. */
 body {
@@ -76,14 +74,12 @@ h1 {
 /* Cria uma grelha responsiva para métricas. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
 
 /* Dá altura mínima aos cartões de métricas. */
-.metric-card {
-  min-height: 135px;
-}
+.metric-card { min-height: 135px; }
 
 /* Estiliza a etiqueta pequena dos cartões de métricas. */
 .metric-label {
@@ -131,40 +127,22 @@ h1 {
 }
 
 /* Cria feedback visual ao tocar/clicar. */
-.btn:active {
-  transform: scale(0.98);
-}
+.btn:active { transform: scale(0.98); }
 
 /* Reduz opacidade de botões desactivados. */
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
+.btn:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* Define botão primário escuro. */
-.btn-primary {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: var(--primary-text);
-}
+.btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
 
 /* Define botão secundário claro. */
-.btn-secondary {
-  background: #f1f5f9;
-}
+.btn-secondary { background: #f1f5f9; }
 
 /* Define botão de perigo. */
-.btn-danger {
-  background: var(--danger-bg);
-  border-color: #fecaca;
-  color: var(--danger);
-}
+.btn-danger { background: var(--danger-bg); border-color: #fecaca; color: var(--danger); }
 
 /* Define botão pequeno para acções compactas. */
-.btn-small {
-  padding: 8px 12px;
-  font-size: 0.86rem;
-}
+.btn-small { padding: 8px 12px; font-size: 0.86rem; }
 
 /* Estiliza badges de estado. */
 .badge {
@@ -176,22 +154,13 @@ h1 {
 }
 
 /* Badge de estado neutro. */
-.badge-muted {
-  background: #e2e8f0;
-  color: #334155;
-}
+.badge-muted { background: #e2e8f0; color: #334155; }
 
 /* Badge de estado activo. */
-.badge-ok {
-  background: var(--ok-bg);
-  color: var(--ok);
-}
+.badge-ok { background: var(--ok-bg); color: var(--ok); }
 
 /* Badge de estado de aviso. */
-.badge-warn {
-  background: var(--warn-bg);
-  color: var(--warn);
-}
+.badge-warn { background: var(--warn-bg); color: var(--warn); }
 
 /* Estiliza dicas e textos de ajuda. */
 .hint {
@@ -211,33 +180,19 @@ h1 {
 }
 
 /* Remove margem dos títulos de secção. */
-.section-title h2,
-.card h2 {
-  margin: 0;
-  letter-spacing: -0.03em;
-}
+.section-title h2, .card h2 { margin: 0; letter-spacing: -0.03em; }
 
 /* Alinha acções em linha. */
-.row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Permite scroll horizontal da tabela em ecrãs pequenos. */
-.table-wrap {
-  overflow-x: auto;
-}
+.table-wrap { overflow-x: auto; }
 
 /* Define largura e colapso da tabela. */
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
+table { width: 100%; border-collapse: collapse; }
 
 /* Estiliza células da tabela. */
-th,
-td {
+th, td {
   border-bottom: 1px solid var(--line);
   padding: 12px 10px;
   text-align: left;
@@ -253,14 +208,10 @@ th {
 }
 
 /* Remove linha inferior da última linha. */
-tbody tr:last-child td {
-  border-bottom: 0;
-}
+tbody tr:last-child td { border-bottom: 0; }
 
 /* Define texto secundário. */
-.muted {
-  color: var(--muted);
-}
+.muted { color: var(--muted); }
 
 /* Estiliza a caixa de log técnico. */
 .log-box {
@@ -276,14 +227,10 @@ tbody tr:last-child td {
 }
 
 /* Esconde separadores inactivos. */
-.tab-panel {
-  display: none;
-}
+.tab-panel { display: none; }
 
 /* Mostra o separador activo. */
-.tab-panel.active {
-  display: block;
-}
+.tab-panel.active { display: block; }
 
 /* Define a navegação inferior fixa. */
 .bottom-nav {
@@ -315,15 +262,12 @@ tbody tr:last-child td {
 }
 
 /* Destaca o separador activo. */
-.nav-btn.active {
-  background: var(--primary);
-  color: var(--primary-text);
-}
+.nav-btn.active { background: var(--primary); color: var(--primary-text); }
 
 /* Define grelha de settings. */
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
 }
@@ -348,9 +292,7 @@ tbody tr:last-child td {
 }
 
 /* Dá margem aos botões de settings. */
-.settings-actions {
-  margin-top: 14px;
-}
+.settings-actions { margin-top: 14px; }
 
 /* Estiliza lista de notas. */
 .notes {
@@ -360,32 +302,19 @@ tbody tr:last-child td {
   padding-left: 20px;
 }
 
+/* Ajusta layout em portáteis pequenos. */
+@media (max-width: 1100px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
 /* Ajusta layout em tablets. */
 @media (max-width: 900px) {
-  .grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Ajusta layout em telemóveis. */
 @media (max-width: 560px) {
-  .topbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .grid,
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .section-title {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .controls {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
+  .topbar { align-items: flex-start; flex-direction: column; }
+  .grid, .settings-grid { grid-template-columns: 1fr; }
+  .section-title { align-items: flex-start; flex-direction: column; }
+  .controls { display: grid; grid-template-columns: 1fr; }
 }
