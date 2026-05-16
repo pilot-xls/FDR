@@ -111,3 +111,27 @@ git remote add origin https://github.com/TEU-USER/flight-data-recorder-pwa.git
 # Envia o projecto para o GitHub.
 git push -u origin main
 ```
+
+## Valores standard desta versão
+
+Os valores por defeito ficam alinhados com a configuração indicada:
+
+| Setting | Value |
+|---|---:|
+| Taxi speed threshold | 20 kt |
+| Takeoff speed min | 35 kt |
+| Initial climb speed min | 85 kt |
+| Climb VS min | 300 ft/min |
+| Descent VS min | 300 ft/min |
+| Stable time | 45 seconds |
+| Cruise VS band | 180 ft/min |
+| Approach trigger speed | 140 kt |
+| Landing speed threshold | 100 kt |
+| Auto-stop speed threshold | 1 kt |
+| Auto-stop stable time | 20 seconds |
+| Minimum GPS interval | 2 seconds |
+| Fuel until TOC | 720 lb/h |
+| Fuel cruise | 600 lb/h |
+| Fuel descent/approach | 580 lb/h |
+
+Os nomes `Taxi speed threshold`, `Approach trigger speed`, `Landing speed threshold` e `Auto-stop speed threshold` são limiares do algoritmo, não limites operacionais da aeronave.

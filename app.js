@@ -18,14 +18,24 @@ const DEFAULT_SETTINGS = {
   descentVsFpm: 300,
   stableSeconds: 45,
   cruiseVsBandFpm: 180,
-  approachMaxKt: 110,
-  landingMaxKt: 55,
+  approachMaxKt: 140,
+  landingMaxKt: 100,
   autoStopSpeedKt: 2,
   autoStopStableSeconds: 20,
   minGpsIntervalSeconds: 2,
   fuelBeforeTocLbh: 720,
   fuelCruiseLbh: 600,
-  fuelDescentLbh: 580
+  fuelDescentLbh: 580,
+  takeoffSpeedKt: 35,
+  takeoffRollKt: 35,
+  initialClimbSpeedKt: 85,
+  liftoffKt: 85,
+  approachTriggerKt: 140,
+  landingRollKt: 100,
+  autoStopKt: 1,
+  autoStopSeconds: 20,
+  fuelUntilTocLbh: 720,
+  fuelDescentApproachLbh: 580
 };
 
 /* Define a chave usada para guardar settings no localStorage. */
