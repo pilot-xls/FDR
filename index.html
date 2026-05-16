@@ -1,0 +1,254 @@
+<!doctype html>
+<!-- Define que este documento usa HTML5. -->
+<html lang="pt-PT">
+<head>
+  <!-- Define a codificação de caracteres da página. -->
+  <meta charset="utf-8">
+
+  <!-- Ajusta a página para ecrãs móveis e impede zoom inicial estranho em telemóveis. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  <!-- Define a cor da barra do browser em dispositivos compatíveis. -->
+  <meta name="theme-color" content="#0f172a">
+
+  <!-- Define o título da aplicação. -->
+  <title>Flight Data Recorder PWA</title>
+
+  <!-- Liga o ficheiro CSS principal. -->
+  <link rel="stylesheet" href="./styles.css">
+
+  <!-- Liga o manifesto da PWA. -->
+  <link rel="manifest" href="./manifest.webmanifest">
+
+  <!-- Define o ícone usado quando a app é adicionada ao ecrã principal. -->
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+</head>
+
+<body>
+  <!-- Container principal da aplicação. -->
+  <main class="app-shell">
+    <!-- Cabeçalho simples com nome e estado da PWA. -->
+    <header class="topbar">
+      <!-- Título principal da app. -->
+      <div>
+        <p class="eyebrow">PWA offline</p>
+        <h1>Flight Data Recorder</h1>
+      </div>
+
+      <!-- Indicador de gravação activo/inactivo. -->
+      <span id="recordingBadge" class="badge badge-muted">Parado</span>
+    </header>
+
+    <!-- Separador principal: gravação do voo. -->
+    <section id="tabFlight" class="tab-panel active">
+      <!-- Cartão com acções principais. -->
+      <section class="card">
+        <!-- Botões principais para iniciar, parar e limpar. -->
+        <div class="controls">
+          <!-- Botão que inicia a gravação GPS. -->
+          <button id="startBtn" class="btn btn-primary">Start</button>
+
+          <!-- Botão que pára a gravação GPS. -->
+          <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
+
+          <!-- Botão que limpa a sessão actual. -->
+          <button id="resetBtn" class="btn btn-danger">Reset</button>
+        </div>
+
+        <!-- Aviso sobre limitações de PWA no iPhone. -->
+        <p class="hint">
+          Mantém a app aberta e o ecrã ligado para melhor fiabilidade, sobretudo em iPhone.
+        </p>
+      </section>
+
+      <!-- Cartão com estado em tempo real. -->
+      <section class="grid">
+        <!-- Cartão do estado GPS. -->
+        <article class="card metric-card">
+          <p class="metric-label">GPS status</p>
+          <h2 id="gpsStatus">À espera</h2>
+          <p id="gpsDetails" class="metric-small">Sem pontos recebidos.</p>
+        </article>
+
+        <!-- Cartão do estado do voo. -->
+        <article class="card metric-card">
+          <p class="metric-label">Flight status</p>
+          <h2 id="flightStatus">—</h2>
+          <p id="flightDetails" class="metric-small">Inicia a gravação para detectar fases.</p>
+        </article>
+
+        <!-- Cartão da velocidade. -->
+        <article class="card metric-card">
+          <p class="metric-label">Ground speed</p>
+          <h2><span id="speedKt">—</span> kt</h2>
+          <p id="speedMs" class="metric-small">— m/s</p>
+        </article>
+
+        <!-- Cartão da altitude. -->
+        <article class="card metric-card">
+          <p class="metric-label">GPS altitude</p>
+          <h2><span id="altitudeFt">—</span> ft</h2>
+          <p id="verticalSpeed" class="metric-small">VS — ft/min</p>
+        </article>
+      </section>
+
+      <!-- Cartão com a tabela de log de fases. -->
+      <section class="card">
+        <!-- Cabeçalho da secção de log. -->
+        <div class="section-title">
+          <h2>Log time</h2>
+
+          <!-- Botões de exportação local. -->
+          <div class="row-actions">
+            <!-- Exporta o log de fases para CSV. -->
+            <button id="exportCsvBtn" class="btn btn-small">Export CSV</button>
+
+            <!-- Exporta sessão completa para JSON. -->
+            <button id="exportJsonBtn" class="btn btn-small">Export JSON</button>
+          </div>
+        </div>
+
+        <!-- Tabela de fases do voo. -->
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Start time</th>
+                <th>End time</th>
+              </tr>
+            </thead>
+            <tbody id="logTableBody">
+              <!-- O JavaScript preenche esta tabela automaticamente. -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Cartão com últimos pontos GPS. -->
+      <section class="card">
+        <!-- Título da lista de pontos GPS recentes. -->
+        <div class="section-title">
+          <h2>Últimos pontos GPS</h2>
+          <span id="pointCount" class="muted">0 pontos</span>
+        </div>
+
+        <!-- Zona compacta onde são mostrados os últimos pontos recebidos. -->
+        <pre id="lastPoints" class="log-box">Sem dados.</pre>
+      </section>
+    </section>
+
+    <!-- Separador de definições. -->
+    <section id="tabSettings" class="tab-panel">
+      <!-- Cartão de configuração dos limiares usados pelo algoritmo. -->
+      <section class="card">
+        <h2>Settings</h2>
+        <p class="hint">
+          Ajusta estes valores ao teu tipo de avião. Estes limiares controlam quando a app muda de fase.
+        </p>
+
+        <!-- Grelha de campos de configuração. -->
+        <div class="settings-grid">
+          <!-- Velocidade abaixo da qual consideramos taxi/solo. -->
+          <label>
+            Taxi max speed (kt)
+            <input id="taxiMaxKt" type="number" min="1" step="1">
+          </label>
+
+          <!-- Velocidade acima da qual começa a corrida de descolagem. -->
+          <label>
+            Takeoff roll min speed (kt)
+            <input id="takeoffRollKt" type="number" min="1" step="1">
+          </label>
+
+          <!-- Velocidade mínima para considerar rotação/descolagem. -->
+          <label>
+            Liftoff min speed (kt)
+            <input id="liftoffKt" type="number" min="1" step="1">
+          </label>
+
+          <!-- Razão de subida mínima para considerar subida sustentada. -->
+          <label>
+            Climb VS min (ft/min)
+            <input id="climbVsFpm" type="number" min="50" step="10">
+          </label>
+
+          <!-- Razão de descida mínima para detectar descida sustentada. -->
+          <label>
+            Descent VS min (ft/min)
+            <input id="descentVsFpm" type="number" min="50" step="10">
+          </label>
+
+          <!-- Tempo necessário para confirmar uma mudança de tendência. -->
+          <label>
+            Stable time (seconds)
+            <input id="stableSeconds" type="number" min="10" step="5">
+          </label>
+
+          <!-- Limite de VS para identificar cruzeiro/TOC. -->
+          <label>
+            Cruise VS band (ft/min)
+            <input id="cruiseVsBandFpm" type="number" min="50" step="10">
+          </label>
+
+          <!-- Altura aproximada para considerar aproximação. -->
+          <label>
+            Approach height above landing ref (ft)
+            <input id="approachHeightFt" type="number" min="100" step="50">
+          </label>
+
+          <!-- Velocidade abaixo da qual consideramos aterragem/rolagem. -->
+          <label>
+            Landing roll max speed (kt)
+            <input id="landingRollKt" type="number" min="1" step="1">
+          </label>
+
+          <!-- Intervalo mínimo entre pontos usados no cálculo. -->
+          <label>
+            Minimum GPS interval (seconds)
+            <input id="minGpsIntervalSeconds" type="number" min="1" step="1">
+          </label>
+        </div>
+
+        <!-- Botões de gestão das definições. -->
+        <div class="controls settings-actions">
+          <!-- Guarda as definições no armazenamento local. -->
+          <button id="saveSettingsBtn" class="btn btn-primary">Guardar settings</button>
+
+          <!-- Repõe as definições recomendadas. -->
+          <button id="defaultSettingsBtn" class="btn btn-secondary">Repor defaults</button>
+        </div>
+      </section>
+
+      <!-- Cartão de notas sobre o algoritmo. -->
+      <section class="card">
+        <h2>Como a detecção funciona</h2>
+        <p class="hint">
+          A app usa apenas GPS: timestamp, latitude, longitude, altitude e velocidade. Altitude e velocidade podem vir
+          vazias em alguns dispositivos; quando isso acontece, a detecção fica menos precisa.
+        </p>
+        <ul class="notes">
+          <li><strong>Taxi:</strong> velocidade baixa em solo.</li>
+          <li><strong>Takeoff roll:</strong> velocidade acima do limite de corrida.</li>
+          <li><strong>Take-off:</strong> subida inicial detectada por altitude/VS.</li>
+          <li><strong>TOC:</strong> subida deixa de ser sustentada e entra em cruzeiro.</li>
+          <li><strong>TOD:</strong> descida sustentada começa depois do cruzeiro.</li>
+          <li><strong>Landing:</strong> velocidade reduz e altitude estabiliza perto da referência de aterragem.</li>
+        </ul>
+      </section>
+    </section>
+
+    <!-- Navegação inferior entre separadores. -->
+    <nav class="bottom-nav" aria-label="Navegação principal">
+      <!-- Abre o separador de voo. -->
+      <button id="flightTabBtn" class="nav-btn active">Flight</button>
+
+      <!-- Abre o separador de settings. -->
+      <button id="settingsTabBtn" class="nav-btn">Settings</button>
+    </nav>
+  </main>
+
+  <!-- Liga o JavaScript principal da aplicação. -->
+  <script src="./app.js"></script>
+</body>
+</html>
