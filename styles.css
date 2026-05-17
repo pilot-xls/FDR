@@ -1,4 +1,5 @@
-/* Define variáveis globais de cor, espaçamento e comportamento visual. */
+
+/* Defines global colour and layout variables. */
 :root {
   --bg: #f8fafc;
   --card: #ffffff;
@@ -11,16 +12,14 @@
   --danger-bg: #fee2e2;
   --ok: #166534;
   --ok-bg: #dcfce7;
-  --warn: #92400e;
-  --warn-bg: #fef3c7;
   --radius: 18px;
   --shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
 }
 
-/* Aplica box-sizing previsível a todos os elementos. */
+/* Makes element dimensions predictable. */
 * { box-sizing: border-box; }
 
-/* Remove margens do body e define o fundo geral. */
+/* Defines the app background and default text. */
 body {
   margin: 0;
   background: var(--bg);
@@ -28,14 +27,14 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
 }
 
-/* Define a largura máxima e o padding da aplicação. */
+/* Defines the app width and mobile padding. */
 .app-shell {
   width: min(1120px, 100%);
   margin: 0 auto;
   padding: 18px 14px 88px;
 }
 
-/* Organiza o cabeçalho principal. */
+/* Arranges the top header. */
 .topbar {
   display: flex;
   align-items: center;
@@ -44,14 +43,14 @@ body {
   margin-bottom: 16px;
 }
 
-/* Remove margem excessiva do título principal. */
+/* Styles the main heading. */
 h1 {
   margin: 0;
   font-size: clamp(1.6rem, 4vw, 2.4rem);
   letter-spacing: -0.04em;
 }
 
-/* Define subtítulo pequeno em maiúsculas. */
+/* Styles the small upper label. */
 .eyebrow {
   margin: 0 0 4px;
   color: var(--muted);
@@ -61,7 +60,7 @@ h1 {
   letter-spacing: 0.12em;
 }
 
-/* Define cartões brancos com sombra suave. */
+/* Creates white cards. */
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -71,17 +70,17 @@ h1 {
   margin-bottom: 14px;
 }
 
-/* Cria uma grelha responsiva para métricas. */
+/* Creates a responsive metric grid. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
-/* Dá altura mínima aos cartões de métricas. */
+/* Sets a minimum height for metric cards. */
 .metric-card { min-height: 135px; }
 
-/* Estiliza a etiqueta pequena dos cartões de métricas. */
+/* Styles metric labels. */
 .metric-label {
   margin: 0 0 8px;
   color: var(--muted);
@@ -91,14 +90,14 @@ h1 {
   letter-spacing: 0.08em;
 }
 
-/* Estiliza o valor principal de cada métrica. */
-.metric-card h2 {
+/* Styles metric values. */
+.metric-card h2, .sector-grid h2 {
   margin: 0 0 8px;
-  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-size: clamp(1.45rem, 4vw, 2rem);
   letter-spacing: -0.04em;
 }
 
-/* Estiliza texto secundário das métricas. */
+/* Styles metric details. */
 .metric-small {
   margin: 0;
   color: var(--muted);
@@ -106,14 +105,14 @@ h1 {
   line-height: 1.4;
 }
 
-/* Alinha botões principais. */
+/* Arranges main buttons. */
 .controls {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-/* Define aspecto base de todos os botões. */
+/* Defines the base button style. */
 .btn {
   appearance: none;
   border: 1px solid var(--line);
@@ -123,28 +122,24 @@ h1 {
   cursor: pointer;
   font-weight: 800;
   padding: 11px 16px;
-  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
-/* Cria feedback visual ao tocar/clicar. */
-.btn:active { transform: scale(0.98); }
-
-/* Reduz opacidade de botões desactivados. */
+/* Defines disabled buttons. */
 .btn:disabled { cursor: not-allowed; opacity: 0.45; }
 
-/* Define botão primário escuro. */
+/* Defines the primary action button. */
 .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
 
-/* Define botão secundário claro. */
+/* Defines secondary buttons. */
 .btn-secondary { background: #f1f5f9; }
 
-/* Define botão de perigo. */
+/* Defines destructive buttons. */
 .btn-danger { background: var(--danger-bg); border-color: #fecaca; color: var(--danger); }
 
-/* Define botão pequeno para acções compactas. */
+/* Defines small buttons. */
 .btn-small { padding: 8px 12px; font-size: 0.86rem; }
 
-/* Estiliza badges de estado. */
+/* Styles badges. */
 .badge {
   border-radius: 999px;
   font-size: 0.78rem;
@@ -153,24 +148,16 @@ h1 {
   white-space: nowrap;
 }
 
-/* Badge de estado neutro. */
+/* Defines neutral badges. */
 .badge-muted { background: #e2e8f0; color: #334155; }
 
-/* Badge de estado activo. */
+/* Defines active badges. */
 .badge-ok { background: var(--ok-bg); color: var(--ok); }
 
-/* Badge de estado de aviso. */
-.badge-warn { background: var(--warn-bg); color: var(--warn); }
+/* Styles help text. */
+.hint { color: var(--muted); font-size: 0.94rem; line-height: 1.5; margin: 10px 0 0; }
 
-/* Estiliza dicas e textos de ajuda. */
-.hint {
-  color: var(--muted);
-  font-size: 0.94rem;
-  line-height: 1.5;
-  margin: 10px 0 0;
-}
-
-/* Alinha título e acções nas secções. */
+/* Arranges section headings and actions. */
 .section-title {
   display: flex;
   align-items: center;
@@ -179,41 +166,31 @@ h1 {
   margin-bottom: 12px;
 }
 
-/* Remove margem dos títulos de secção. */
+/* Removes default margins from section headings. */
 .section-title h2, .card h2 { margin: 0; letter-spacing: -0.03em; }
 
-/* Alinha acções em linha. */
+/* Arranges row actions. */
 .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* Permite scroll horizontal da tabela em ecrãs pequenos. */
+/* Enables table horizontal scroll on mobile. */
 .table-wrap { overflow-x: auto; }
 
-/* Define largura e colapso da tabela. */
+/* Defines table layout. */
 table { width: 100%; border-collapse: collapse; }
 
-/* Estiliza células da tabela. */
-th, td {
-  border-bottom: 1px solid var(--line);
-  padding: 12px 10px;
-  text-align: left;
-  white-space: nowrap;
-}
+/* Styles table cells. */
+th, td { border-bottom: 1px solid var(--line); padding: 12px 10px; text-align: left; white-space: nowrap; }
 
-/* Estiliza cabeçalhos da tabela. */
-th {
-  color: var(--muted);
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
+/* Styles table headers. */
+th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
 
-/* Remove linha inferior da última linha. */
+/* Removes final table border. */
 tbody tr:last-child td { border-bottom: 0; }
 
-/* Define texto secundário. */
+/* Defines muted text. */
 .muted { color: var(--muted); }
 
-/* Estiliza a caixa de log técnico. */
+/* Styles technical log output. */
 .log-box {
   background: #020617;
   border-radius: 14px;
@@ -226,13 +203,13 @@ tbody tr:last-child td { border-bottom: 0; }
   max-height: 260px;
 }
 
-/* Esconde separadores inactivos. */
+/* Hides inactive tabs. */
 .tab-panel { display: none; }
 
-/* Mostra o separador activo. */
+/* Shows active tabs. */
 .tab-panel.active { display: block; }
 
-/* Define a navegação inferior fixa. */
+/* Defines fixed bottom navigation. */
 .bottom-nav {
   position: fixed;
   left: 50%;
@@ -250,7 +227,7 @@ tbody tr:last-child td { border-bottom: 0; }
   backdrop-filter: blur(12px);
 }
 
-/* Define botões da navegação inferior. */
+/* Styles navigation buttons. */
 .nav-btn {
   border: 0;
   border-radius: 999px;
@@ -261,60 +238,35 @@ tbody tr:last-child td { border-bottom: 0; }
   padding: 12px;
 }
 
-/* Destaca o separador activo. */
+/* Highlights active navigation. */
 .nav-btn.active { background: var(--primary); color: var(--primary-text); }
 
-/* Define grelha de settings. */
-.settings-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 14px;
-}
+/* Defines settings grid. */
+.settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 
-/* Estiliza labels das settings. */
-.settings-grid label {
-  color: var(--muted);
-  display: grid;
-  font-size: 0.86rem;
-  font-weight: 800;
-  gap: 7px;
-}
+/* Styles settings labels. */
+.settings-grid label { color: var(--muted); display: grid; font-size: 0.86rem; font-weight: 800; gap: 7px; }
 
-/* Estiliza inputs numéricos. */
-.settings-grid input {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  color: var(--text);
-  font: inherit;
-  padding: 11px 12px;
-  width: 100%;
-}
+/* Styles settings inputs. */
+.settings-grid input { border: 1px solid var(--line); border-radius: 12px; color: var(--text); font: inherit; padding: 11px 12px; width: 100%; }
 
-/* Dá margem aos botões de settings. */
+/* Adds spacing to settings actions. */
 .settings-actions { margin-top: 14px; }
 
-/* Estiliza lista de notas. */
-.notes {
-  color: var(--muted);
-  line-height: 1.6;
-  margin-bottom: 0;
-  padding-left: 20px;
-}
+/* Styles notes. */
+.notes { color: var(--muted); line-height: 1.6; margin-bottom: 0; padding-left: 20px; }
 
-/* Ajusta layout em portáteis pequenos. */
-@media (max-width: 1100px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Defines sector grid. */
+.sector-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; }
 
-/* Ajusta layout em tablets. */
+/* Adjusts layout on tablets. */
 @media (max-width: 900px) {
-  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid, .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Ajusta layout em telemóveis. */
-@media (max-width: 560px) {
-  .topbar { align-items: flex-start; flex-direction: column; }
-  .grid, .settings-grid { grid-template-columns: 1fr; }
-  .section-title { align-items: flex-start; flex-direction: column; }
+/* Adjusts layout on mobile. */
+@media (max-width: 600px) {
+  .topbar, .section-title { align-items: flex-start; flex-direction: column; }
+  .grid, .settings-grid, .sector-grid { grid-template-columns: 1fr; }
   .controls { display: grid; grid-template-columns: 1fr; }
 }

@@ -1,10 +1,20 @@
-# Flight Data Recorder PWA v2
+# Flight Data Recorder PWA v4
 
-PWA offline em HTML, CSS e JavaScript para registar pontos GPS, detectar fases de voo e calcular consumo aproximado.
+PWA offline em HTML, CSS e JavaScript para registar sectores de voo com GPS, flight time, block time e consumo de combustível.
 
-## Estados registados
+## Novidades nesta versão
 
-A app cria um log com:
+- Adicionado **Flight time**.
+- Adicionado **Saved sectors**.
+- Adicionado **Next Sector** no auto-stop final.
+- O auto-stop pergunta:
+  - **OK**: guardar o sector e iniciar o próximo sector.
+  - **Cancel**: guardar o sector e parar em `blocks on`.
+- A app tenta identificar `departure` e `destination` por coordenadas quando há internet.
+- Se não conseguir identificar aeroportos/códigos, pergunta o nome do sector manualmente.
+- Exporta todos os sectores para CSV e JSON.
+
+## Estados usados
 
 - blocks off
 - taxi
@@ -20,62 +30,39 @@ A app cria um log com:
 - taxi
 - blocks on
 
-A tabela principal mostra:
+## Valores default
 
-- Status
-- Start Time
-- Consumption
-
-O `end_time` continua a existir internamente e no CSV/JSON para permitir calcular consumo por fase.
-
-## Consumo padrão
-
-- Até ao TOC: `720 lb/h`
-- Cruise: `600 lb/h`
-- Descent / approach / landing / taxi final: `580 lb/h`
-
-Estes valores podem ser alterados no separador **Settings**.
-
-## Auto-stop
-
-Depois de landing, quando a app entra no taxi final e a velocidade fica perto de zero durante o tempo configurado, aparece uma pergunta:
-
-```text
-A velocidade está perto de zero no taxi final. O voo terminou e queres fazer Blocks on?
-```
-
-Se confirmares, a app pára a gravação e cria o evento `blocks on`.
-
-## Correcção aplicada ao bug de Descent
-
-A versão anterior podia ficar presa em `Descent` porque dependia da altitude do aeródromo de partida para reconhecer aproximação/aterragem. Esta versão remove essa dependência. Agora a passagem para `approach` e `landing` usa principalmente:
-
-- estado anterior;
-- existência de TOD/descent;
-- velocidade;
-- tendência vertical.
-
-## Limitações importantes
-
-- Em iPhone, uma PWA não deve ser considerada fiável com o ecrã bloqueado.
-- Mantém a app aberta e o ecrã ligado durante a gravação.
-- O GPS pode funcionar sem internet, mas a app tem de ter sido aberta pelo menos uma vez para ficar em cache offline.
-- `speed`, `altitude` e `heading` podem vir como `null`, dependendo do dispositivo e do browser.
-- Este projecto é um protótipo técnico e não deve ser usado como instrumento primário de navegação.
+| Setting | Value |
+|---|---:|
+| Taxi speed threshold | 20 kt |
+| Takeoff speed min | 35 kt |
+| Initial climb speed min | 90 kt |
+| Climb VS min | 400 ft/min |
+| Descent VS min | 300 ft/min |
+| Stable time | 60 seconds |
+| Cruise VS band | 250 ft/min |
+| Approach trigger speed | 130 kt |
+| Landing speed threshold | 85 kt |
+| Auto-stop speed threshold | 3 kt |
+| Auto-stop stable time | 30 seconds |
+| Minimum GPS interval | 2 seconds |
+| Fuel until TOC | 720 lb/h |
+| Fuel cruise | 600 lb/h |
+| Fuel descent/approach | 580 lb/h |
 
 ## Como correr localmente
 
-A Geolocation API exige HTTPS ou `localhost`.
+A Geolocation API exige HTTPS ou localhost.
 
 ```bash
 # Entra na pasta do projecto.
-cd flight-data-recorder-pwa-v2
+cd flight-data-recorder-pwa-v4-next-sector
 
-# Inicia um servidor local simples na porta 8080.
+# Inicia um servidor local simples.
 python3 -m http.server 8080
 ```
 
-Depois abre:
+Abre:
 
 ```text
 http://localhost:8080
@@ -83,55 +70,32 @@ http://localhost:8080
 
 ## Como publicar no GitHub Pages
 
-1. Cria um repositório novo no GitHub.
-2. Envia estes ficheiros para o repositório.
-3. Vai a **Settings > Pages**.
-4. Em **Build and deployment**, escolhe **Deploy from a branch**.
-5. Escolhe a branch `main` e a pasta `/root`.
-6. Abre o URL gerado pelo GitHub Pages.
-
-## Comandos Git sugeridos
-
 ```bash
-# Inicia um repositório Git local.
+# Inicia o repositório.
 git init
 
-# Adiciona todos os ficheiros ao stage.
+# Adiciona todos os ficheiros.
 git add .
 
 # Cria o primeiro commit.
-git commit -m "Initial PWA flight data recorder v2"
+git commit -m "Add flight data recorder PWA v4"
 
-# Define a branch principal como main.
+# Define a branch principal.
 git branch -M main
 
-# Liga o repositório local ao teu repositório GitHub.
+# Liga ao repositório remoto.
 git remote add origin https://github.com/TEU-USER/flight-data-recorder-pwa.git
 
-# Envia o projecto para o GitHub.
+# Envia para o GitHub.
 git push -u origin main
 ```
 
-## Valores standard desta versão
+Depois activa GitHub Pages em **Settings > Pages**.
 
-Os valores por defeito ficam alinhados com a configuração indicada:
+## Limitações
 
-| Setting | Value |
-|---|---:|
-| Taxi speed threshold | 20 kt |
-| Takeoff speed min | 35 kt |
-| Initial climb speed min | 85 kt |
-| Climb VS min | 300 ft/min |
-| Descent VS min | 300 ft/min |
-| Stable time | 45 seconds |
-| Cruise VS band | 180 ft/min |
-| Approach trigger speed | 140 kt |
-| Landing speed threshold | 100 kt |
-| Auto-stop speed threshold | 1 kt |
-| Auto-stop stable time | 20 seconds |
-| Minimum GPS interval | 2 seconds |
-| Fuel until TOC | 720 lb/h |
-| Fuel cruise | 600 lb/h |
-| Fuel descent/approach | 580 lb/h |
-
-Os nomes `Taxi speed threshold`, `Approach trigger speed`, `Landing speed threshold` e `Auto-stop speed threshold` são limiares do algoritmo, não limites operacionais da aeronave.
+- Em iPhone, uma PWA não é fiável com o ecrã bloqueado.
+- Mantém a app aberta e o ecrã ligado.
+- GPS pode funcionar offline; identificação automática de aeroporto não.
+- `speed`, `altitude` e `heading` podem vir como `null` dependendo do dispositivo/browser.
+- Isto é um protótipo técnico, não um instrumento certificado.

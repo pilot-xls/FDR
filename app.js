@@ -1,62 +1,53 @@
-/*
-  Flight Data Recorder PWA v2
-  Este ficheiro trata de:
-  - GPS contínuo com navigator.geolocation.watchPosition();
-  - funcionamento offline com service worker;
-  - gravação local em IndexedDB;
-  - detecção de blocks off, taxi, takeoff, initial climb, climb, TOC, cruise, TOD, descent, approach, landing, taxi e blocks on;
-  - cálculo de consumo por fase em lb;
-  - auto-stop no taxi final quando a velocidade estabiliza perto de zero.
-*/
 
-/* Define as configurações padrão do algoritmo de detecção e do consumo. */
+/* Flight Data Recorder PWA v4 with flight time, next sector and sector export. */
+
+/* Defines default settings for the aircraft and detection algorithm. */
 const DEFAULT_SETTINGS = {
   taxiMaxKt: 20,
-  takeoffKt: 35,
-  initialClimbKt: 50,
-  climbVsFpm: 300,
-  descentVsFpm: 300,
-  stableSeconds: 45,
-  cruiseVsBandFpm: 180,
-  approachMaxKt: 140,
-  landingMaxKt: 100,
-  autoStopSpeedKt: 2,
-  autoStopStableSeconds: 20,
-  minGpsIntervalSeconds: 2,
-  fuelBeforeTocLbh: 720,
-  fuelCruiseLbh: 600,
-  fuelDescentLbh: 580,
   takeoffSpeedKt: 35,
-  takeoffRollKt: 35,
-  initialClimbSpeedKt: 85,
-  liftoffKt: 85,
-  approachTriggerKt: 140,
-  landingRollKt: 100,
-  autoStopKt: 1,
-  autoStopSeconds: 20,
+  initialClimbSpeedKt: 90,
+  climbVsFpm: 400,
+  descentVsFpm: 300,
+  stableSeconds: 60,
+  cruiseVsBandFpm: 250,
+  approachTriggerKt: 130,
+  landingSpeedKt: 85,
+  autoStopKt: 3,
+  autoStopSeconds: 30,
+  minGpsIntervalSeconds: 2,
   fuelUntilTocLbh: 720,
+  fuelCruiseLbh: 600,
   fuelDescentApproachLbh: 580
 };
 
-/* Define a chave usada para guardar settings no localStorage. */
-const SETTINGS_KEY = "flightDataRecorderSettingsV2";
+/* Stores the localStorage key for settings. */
+const SETTINGS_KEY = "flightDataRecorderSettings.v4";
 
-/* Define a chave usada para guardar o estado resumido da sessão no localStorage. */
-const SESSION_KEY = "flightDataRecorderSessionV2";
+/* Stores the localStorage key for all sectors and the active sector. */
+const STATE_KEY = "flightDataRecorderState.v4";
 
-/* Guarda o identificador devolvido por watchPosition para podermos parar o GPS. */
+/* Stores the geolocation watch identifier. */
 let watchId = null;
 
-/* Guarda uma referência ao bloqueio de ecrã, se o browser suportar Wake Lock. */
+/* Stores the optional screen wake lock. */
 let wakeLock = null;
 
-/* Guarda o estado actual da gravação e do algoritmo. */
-let state = createEmptyState();
+/* Stores the UI timer identifier. */
+let uiTimerId = null;
 
-/* Lê as settings gravadas localmente ou usa os valores padrão. */
+/* Prevents repeated auto-stop prompts. */
+let autoStopPromptOpen = false;
+
+/* Stores the timestamp from which the aircraft appears stopped. */
+let stoppedSinceMs = null;
+
+/* Loads saved settings or uses defaults. */
 let settings = loadSettings();
 
-/* Guarda referências aos elementos da interface para evitar pesquisas repetidas no DOM. */
+/* Creates the main application state. */
+let state = loadState() || createInitialState();
+
+/* Stores UI element references. */
 const ui = {
   recordingBadge: document.getElementById("recordingBadge"),
   startBtn: document.getElementById("startBtn"),
@@ -64,6 +55,11 @@ const ui = {
   resetBtn: document.getElementById("resetBtn"),
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   exportJsonBtn: document.getElementById("exportJsonBtn"),
+  sectorBadge: document.getElementById("sectorBadge"),
+  sectorName: document.getElementById("sectorName"),
+  sectorRoute: document.getElementById("sectorRoute"),
+  flightTime: document.getElementById("flightTime"),
+  blockTime: document.getElementById("blockTime"),
   gpsStatus: document.getElementById("gpsStatus"),
   gpsDetails: document.getElementById("gpsDetails"),
   flightStatus: document.getElementById("flightStatus"),
@@ -72,9 +68,9 @@ const ui = {
   speedMs: document.getElementById("speedMs"),
   altitudeFt: document.getElementById("altitudeFt"),
   verticalSpeed: document.getElementById("verticalSpeed"),
-  totalFuelLb: document.getElementById("totalFuelLb"),
-  currentFuelRate: document.getElementById("currentFuelRate"),
   logTableBody: document.getElementById("logTableBody"),
+  sectorsTableBody: document.getElementById("sectorsTableBody"),
+  savedSectorCount: document.getElementById("savedSectorCount"),
   pointCount: document.getElementById("pointCount"),
   lastPoints: document.getElementById("lastPoints"),
   tabFlight: document.getElementById("tabFlight"),
@@ -85,290 +81,310 @@ const ui = {
   defaultSettingsBtn: document.getElementById("defaultSettingsBtn")
 };
 
-/* Guarda referências aos campos de settings. */
+/* Stores settings input references. */
 const settingInputs = {
   taxiMaxKt: document.getElementById("taxiMaxKt"),
-  takeoffKt: document.getElementById("takeoffKt"),
-  initialClimbKt: document.getElementById("initialClimbKt"),
+  takeoffSpeedKt: document.getElementById("takeoffSpeedKt"),
+  initialClimbSpeedKt: document.getElementById("initialClimbSpeedKt"),
   climbVsFpm: document.getElementById("climbVsFpm"),
   descentVsFpm: document.getElementById("descentVsFpm"),
   stableSeconds: document.getElementById("stableSeconds"),
   cruiseVsBandFpm: document.getElementById("cruiseVsBandFpm"),
-  approachMaxKt: document.getElementById("approachMaxKt"),
-  landingMaxKt: document.getElementById("landingMaxKt"),
-  autoStopSpeedKt: document.getElementById("autoStopSpeedKt"),
-  autoStopStableSeconds: document.getElementById("autoStopStableSeconds"),
+  approachTriggerKt: document.getElementById("approachTriggerKt"),
+  landingSpeedKt: document.getElementById("landingSpeedKt"),
+  autoStopKt: document.getElementById("autoStopKt"),
+  autoStopSeconds: document.getElementById("autoStopSeconds"),
   minGpsIntervalSeconds: document.getElementById("minGpsIntervalSeconds"),
-  fuelBeforeTocLbh: document.getElementById("fuelBeforeTocLbh"),
+  fuelUntilTocLbh: document.getElementById("fuelUntilTocLbh"),
   fuelCruiseLbh: document.getElementById("fuelCruiseLbh"),
-  fuelDescentLbh: document.getElementById("fuelDescentLbh")
+  fuelDescentApproachLbh: document.getElementById("fuelDescentApproachLbh")
 };
 
-/* Inicializa a aplicação quando o ficheiro é carregado. */
+/* Initializes the application. */
 init();
 
-/* Cria um estado vazio e consistente para uma nova sessão. */
-function createEmptyState() {
-  /* Devolve a estrutura base usada pela aplicação. */
+/* Creates an empty application state. */
+function createInitialState() {
+  /* Returns a complete initial state. */
   return {
     isRecording: false,
+    activeSector: createSector(1),
+    savedSectors: [],
     currentPhase: "—",
-    startedAt: null,
-    stoppedAt: null,
-    points: [],
-    logs: [],
     lastPhaseChangeMs: 0,
     hadTakeoff: false,
     hadToc: false,
     hadTod: false,
     hadLanding: false,
-    autoStopCandidateSinceMs: null,
-    autoStopPrompted: false
+    lastGroundReferenceFt: null
   };
 }
 
-/* Configura listeners, carrega estado guardado e regista o service worker. */
+/* Creates a new sector object. */
+function createSector(number) {
+  /* Returns a sector with empty logs and points. */
+  return {
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${number}`,
+    number,
+    name: `Sector ${number}`,
+    departure: null,
+    destination: null,
+    blockOffAt: null,
+    blockOnAt: null,
+    takeoffAt: null,
+    landingAt: null,
+    points: [],
+    logs: [],
+    totals: { blockSeconds: 0, flightSeconds: 0, fuelLb: 0 }
+  };
+}
+
+/* Wires events and renders the first view. */
 function init() {
-  /* Liga o botão Start à função que inicia a gravação. */
+  /* Starts recording when the start button is pressed. */
   ui.startBtn.addEventListener("click", startRecording);
 
-  /* Liga o botão Stop à função que pára a gravação e cria blocks on. */
-  ui.stopBtn.addEventListener("click", () => stopRecording("manual"));
+  /* Stops the active sector when the stop button is pressed. */
+  ui.stopBtn.addEventListener("click", () => finalizeCurrentSector(false));
 
-  /* Liga o botão Reset à função que limpa a sessão. */
-  ui.resetBtn.addEventListener("click", resetSession);
+  /* Deletes all local data when reset is pressed. */
+  ui.resetBtn.addEventListener("click", resetAll);
 
-  /* Liga a exportação CSV ao respectivo botão. */
+  /* Exports CSV when pressed. */
   ui.exportCsvBtn.addEventListener("click", exportCsv);
 
-  /* Liga a exportação JSON ao respectivo botão. */
+  /* Exports JSON when pressed. */
   ui.exportJsonBtn.addEventListener("click", exportJson);
 
-  /* Liga o separador Flight ao botão de navegação. */
+  /* Opens the flight tab. */
   ui.flightTabBtn.addEventListener("click", () => setTab("flight"));
 
-  /* Liga o separador Settings ao botão de navegação. */
+  /* Opens the settings tab. */
   ui.settingsTabBtn.addEventListener("click", () => setTab("settings"));
 
-  /* Guarda settings quando o utilizador carrega no botão. */
+  /* Saves settings from the form. */
   ui.saveSettingsBtn.addEventListener("click", saveSettingsFromForm);
 
-  /* Repõe settings padrão quando o utilizador carrega no botão. */
+  /* Restores default settings. */
   ui.defaultSettingsBtn.addEventListener("click", restoreDefaultSettings);
 
-  /* Preenche o formulário de settings com os valores actuais. */
+  /* Writes current settings into the form. */
   fillSettingsForm();
 
-  /* Carrega uma sessão anterior, caso exista. */
-  loadSession().then(() => {
-    /* Actualiza a interface quando o carregamento terminar. */
-    render();
-  });
+  /* Ensures a previously open recording is not treated as still recording after reload. */
+  state.isRecording = false;
 
-  /* Regista o service worker para permitir uso offline. */
+  /* Renders the UI. */
+  render();
+
+  /* Starts the live clock. */
+  startUiTimer();
+
+  /* Registers the service worker for offline use. */
   registerServiceWorker();
 }
 
-/* Inicia a gravação de pontos GPS. */
+/* Starts GPS recording and creates blocks off/taxi. */
 async function startRecording() {
-  /* Verifica se o browser suporta a API de geolocalização. */
+  /* Checks that geolocation exists in the current browser. */
   if (!("geolocation" in navigator)) {
-    /* Mostra erro quando não há suporte de geolocalização. */
-    setGpsStatus("Erro", "Este browser não suporta geolocalização.");
+    setGpsStatus("Error", "This browser does not support geolocation.");
     return;
   }
 
-  /* Marca a sessão como activa. */
-  state.isRecording = true;
-
-  /* Guarda a hora de início da sessão se ainda não existir. */
-  state.startedAt = state.startedAt || new Date().toISOString();
-
-  /* Cria o evento blocks off se esta for uma sessão nova. */
-  if (state.logs.length === 0) {
-    /* Guarda o instante exacto do início de blocks off. */
-    const nowMs = Date.now();
-
-    /* Converte o instante actual para ISO. */
-    const nowIso = new Date(nowMs).toISOString();
-
-    /* Adiciona blocks off como evento sem consumo. */
-    addEventLog("blocks off", nowIso, nowMs);
-
-    /* Inicia a fase de taxi imediatamente após blocks off. */
-    beginPhase("taxi", nowIso, nowMs);
+  /* Creates a fresh sector if the previous active sector is already closed. */
+  if (state.activeSector.blockOnAt) {
+    state.activeSector = createSector(state.savedSectors.length + 1);
+    resetDetectionFlags();
   }
 
-  /* Actualiza botões e indicadores imediatamente. */
-  render();
+  /* Marks the app as recording. */
+  state.isRecording = true;
 
-  /* Tenta manter o ecrã activo nos browsers que suportam Screen Wake Lock. */
+  /* Creates blocks off and taxi when the sector starts. */
+  if (!state.activeSector.blockOffAt) {
+    const nowIso = new Date().toISOString();
+    state.activeSector.blockOffAt = nowIso;
+    setPhase("blocks off", nowIso, Date.now());
+    setPhase("taxi", nowIso, Date.now());
+  }
+
+  /* Requests screen wake lock when supported. */
   await requestWakeLock();
 
-  /* Inicia a monitorização contínua de GPS. */
-  watchId = navigator.geolocation.watchPosition(
-    /* Recebe uma posição quando o sistema actualiza o GPS. */
-    handlePosition,
+  /* Starts continuous GPS tracking. */
+  watchId = navigator.geolocation.watchPosition(handlePosition, handleGeoError, {
+    enableHighAccuracy: true,
+    maximumAge: 1000,
+    timeout: 15000
+  });
 
-    /* Recebe um erro quando a localização falha ou é recusada. */
-    handleGeoError,
+  /* Updates the GPS card while waiting for the first point. */
+  setGpsStatus("Searching", "Waiting for high accuracy GPS.");
 
-    /* Define opções de precisão e timing da geolocalização. */
-    {
-      enableHighAccuracy: true,
-      maximumAge: 1000,
-      timeout: 15000
-    }
-  );
-
-  /* Mostra que estamos à espera do primeiro ponto GPS. */
-  setGpsStatus("A procurar", "A aguardar primeiro ponto GPS de alta precisão.");
+  /* Saves and renders the state. */
+  saveState();
+  render();
 }
 
-/* Pára a gravação de pontos GPS e cria o evento blocks on. */
-async function stopRecording(reason = "manual") {
-  /* Cancela watchPosition se estiver activo. */
+/* Stops the GPS watch without closing the sector. */
+async function stopGpsOnly() {
+  /* Clears the active geolocation watch. */
   if (watchId !== null) {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
   }
 
-  /* Obtém o último ponto GPS, se existir. */
-  const lastPoint = state.points[state.points.length - 1];
-
-  /* Usa o timestamp do último ponto ou a hora actual. */
-  const stopMs = lastPoint ? lastPoint.timestampMs : Date.now();
-
-  /* Converte o timestamp escolhido para ISO. */
-  const stopIso = new Date(stopMs).toISOString();
-
-  /* Aplica uma correcção final caso a app tenha ficado presa em descent/approach. */
-  applyFinalLandingCorrection(stopIso, stopMs);
-
-  /* Fecha a fase actual com a hora de paragem. */
-  closeCurrentPhase(stopIso, stopMs);
-
-  /* Adiciona o evento blocks on ao log. */
-  addEventLog("blocks on", stopIso, stopMs);
-
-  /* Marca a fase visível como blocks on. */
-  state.currentPhase = "blocks on";
-
-  /* Marca a sessão como parada. */
+  /* Marks recording as stopped. */
   state.isRecording = false;
 
-  /* Guarda a hora de paragem. */
-  state.stoppedAt = new Date().toISOString();
-
-  /* Liberta o Wake Lock, se existir. */
+  /* Releases screen wake lock. */
   await releaseWakeLock();
+}
 
-  /* Guarda a sessão actualizada no armazenamento local. */
-  saveSession();
+/* Finalizes the current sector as blocks on. */
+async function finalizeCurrentSector(startNextAfterSave) {
+  /* Does nothing if the sector is already closed. */
+  if (state.activeSector.blockOnAt) return;
 
-  /* Actualiza a interface. */
+  /* Stops GPS updates. */
+  await stopGpsOnly();
+
+  /* Uses the current time as blocks on. */
+  const nowIso = new Date().toISOString();
+
+  /* Closes the current phase. */
+  closeCurrentLog(nowIso);
+
+  /* Creates and closes blocks on. */
+  setPhase("blocks on", nowIso, Date.now());
+  closeCurrentLog(nowIso);
+
+  /* Stores block-on time. */
+  state.activeSector.blockOnAt = nowIso;
+
+  /* Recalculates totals. */
+  updateSectorTotals(state.activeSector);
+
+  /* Attempts to identify departure and destination. */
+  await resolveSectorAirports(state.activeSector);
+
+  /* Requests a manual name if automatic naming failed. */
+  await ensureSectorName(state.activeSector);
+
+  /* Saves a copy of the closed sector. */
+  state.savedSectors.push(clone(state.activeSector));
+
+  /* Saves the full state. */
+  saveState();
+
+  /* Renders the closed sector summary. */
   render();
 
-  /* Mostra mensagem curta quando o stop veio do auto-stop. */
-  if (reason === "auto") {
-    setGpsStatus("Parado", "Auto-stop confirmado. Blocks on criado.");
+  /* Starts a new sector if requested. */
+  if (startNextAfterSave) {
+    await startNextSector();
   }
 }
 
-/* Limpa a sessão actual depois de confirmação do utilizador. */
-async function resetSession() {
-  /* Pede confirmação para evitar apagar dados por acidente. */
-  const ok = window.confirm("Queres mesmo apagar a sessão actual e todos os pontos gravados?");
+/* Starts a new sector immediately after saving the previous sector. */
+async function startNextSector() {
+  /* Calculates the next sector number. */
+  const nextNumber = state.savedSectors.length + 1;
 
-  /* Aborta o reset se o utilizador cancelar. */
-  if (!ok) return;
+  /* Creates the new active sector. */
+  state.activeSector = createSector(nextNumber);
 
-  /* Pára a gravação se estiver activa. */
-  if (state.isRecording && watchId !== null) {
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
+  /* Resets detection flags. */
+  resetDetectionFlags();
 
-  /* Liberta o Wake Lock, se existir. */
-  await releaseWakeLock();
+  /* Saves state before starting GPS. */
+  saveState();
 
-  /* Limpa o estado em memória. */
-  state = createEmptyState();
-
-  /* Remove o resumo da sessão do localStorage. */
-  localStorage.removeItem(SESSION_KEY);
-
-  /* Apaga os pontos guardados na IndexedDB. */
-  await clearPointsDb();
-
-  /* Actualiza a interface. */
-  render();
+  /* Starts recording the new sector. */
+  await startRecording();
 }
 
-/* Trata uma posição GPS recebida por watchPosition. */
+/* Resets algorithm flags for a fresh sector. */
+function resetDetectionFlags() {
+  /* Clears the current flight phase. */
+  state.currentPhase = "—";
+
+  /* Clears the last phase timestamp. */
+  state.lastPhaseChangeMs = 0;
+
+  /* Clears phase-detection flags. */
+  state.hadTakeoff = false;
+  state.hadToc = false;
+  state.hadTod = false;
+  state.hadLanding = false;
+
+  /* Clears the rough ground reference. */
+  state.lastGroundReferenceFt = null;
+
+  /* Clears auto-stop state. */
+  stoppedSinceMs = null;
+  autoStopPromptOpen = false;
+}
+
+/* Handles each GPS position received from the browser. */
 async function handlePosition(position) {
-  /* Converte a posição bruta para um objecto interno normalizado. */
-  const point = normalisePosition(position);
+  /* Converts the browser position to the internal point format. */
+  const point = normalizePosition(position);
 
-  /* Ignora pontos recebidos demasiado perto do anterior para reduzir ruído. */
+  /* Skips points that arrive too close together. */
   if (shouldSkipPoint(point)) return;
 
-  /* Adiciona o ponto ao array em memória. */
-  state.points.push(point);
+  /* Adds the point to the active sector. */
+  state.activeSector.points.push(point);
 
-  /* Guarda o ponto na IndexedDB para sobreviver a refreshes da página. */
-  await savePointToDb(point);
-
-  /* Detecta a fase do voo com base no ponto novo e no histórico. */
+  /* Detects the current phase from the new point. */
   detectPhase(point);
 
-  /* Avalia auto-stop depois da detecção de fase. */
-  await checkAutoStop(point);
+  /* Updates total times and fuel. */
+  updateSectorTotals(state.activeSector);
 
-  /* Guarda o resumo da sessão no localStorage. */
-  saveSession();
+  /* Saves data locally. */
+  saveState();
 
-  /* Mostra dados actualizados no ecrã. */
+  /* Updates the UI. */
   render();
+
+  /* Checks whether final taxi has stopped and asks next-sector question. */
+  await maybeAskAutoStop(point);
 }
 
-/* Trata erros da API de geolocalização. */
+/* Handles geolocation errors. */
 function handleGeoError(error) {
-  /* Define uma mensagem amigável de acordo com o tipo de erro. */
-  const messageByCode = {
-    1: "Permissão de localização recusada.",
-    2: "Posição indisponível.",
-    3: "Tempo esgotado ao tentar obter posição."
+  /* Maps geolocation errors to readable messages. */
+  const messages = {
+    1: "Location permission denied.",
+    2: "Position unavailable.",
+    3: "Timeout while getting location."
   };
 
-  /* Escolhe a mensagem específica ou usa a mensagem original. */
-  const message = messageByCode[error.code] || error.message || "Erro desconhecido de GPS.";
+  /* Shows the error message. */
+  setGpsStatus("Error", messages[error.code] || error.message || "Unknown GPS error.");
 
-  /* Mostra o erro na interface. */
-  setGpsStatus("Erro", message);
-
-  /* Guarda a sessão para preservar dados já recolhidos. */
-  saveSession();
-
-  /* Actualiza a interface. */
+  /* Re-renders the UI. */
   render();
 }
 
-/* Converte um objecto GeolocationPosition para uma estrutura simples. */
-function normalisePosition(position) {
-  /* Guarda a referência curta às coordenadas. */
+/* Converts a GeolocationPosition into an app point. */
+function normalizePosition(position) {
+  /* Shortens access to browser coordinates. */
   const c = position.coords;
 
-  /* Converte a altitude de metros para pés, se existir. */
+  /* Converts altitude to feet. */
   const altitudeFt = metersToFeet(c.altitude);
 
-  /* Converte a velocidade de metros por segundo para nós, se existir. */
+  /* Converts speed to knots. */
   const speedKt = msToKnots(c.speed);
 
-  /* Calcula a razão vertical usando o ponto anterior e a altitude GPS. */
+  /* Calculates vertical speed from the previous point. */
   const verticalSpeedFpm = calculateVerticalSpeedFpm(position.timestamp, altitudeFt);
 
-  /* Devolve o ponto normalizado usado pela app. */
+  /* Returns the normalized point. */
   return {
     id: crypto.randomUUID ? crypto.randomUUID() : String(position.timestamp),
     timestampMs: position.timestamp,
@@ -386,899 +402,912 @@ function normalisePosition(position) {
   };
 }
 
-/* Decide se um ponto deve ser ignorado por chegar demasiado depressa. */
+/* Decides whether the point should be skipped. */
 function shouldSkipPoint(point) {
-  /* Obtém o ponto anterior, se existir. */
-  const previous = state.points[state.points.length - 1];
+  /* Gets the previous point. */
+  const previous = state.activeSector.points[state.activeSector.points.length - 1];
 
-  /* Aceita o ponto se ainda não houver ponto anterior. */
+  /* Accepts the first point. */
   if (!previous) return false;
 
-  /* Calcula a diferença em segundos entre o ponto actual e o anterior. */
-  const diffSeconds = (point.timestampMs - previous.timestampMs) / 1000;
+  /* Calculates point interval in seconds. */
+  const seconds = (point.timestampMs - previous.timestampMs) / 1000;
 
-  /* Ignora o ponto se o intervalo for menor que o configurado. */
-  return diffSeconds < settings.minGpsIntervalSeconds;
+  /* Skips if the interval is below the configured minimum. */
+  return seconds < settings.minGpsIntervalSeconds;
 }
 
-/* Calcula velocidade vertical em pés por minuto a partir da altitude GPS. */
+/* Calculates vertical speed using altitude difference. */
 function calculateVerticalSpeedFpm(timestampMs, altitudeFt) {
-  /* Obtém o ponto anterior. */
-  const previous = state.points[state.points.length - 1];
+  /* Gets the previous point. */
+  const previous = state.activeSector.points[state.activeSector.points.length - 1];
 
-  /* Devolve null se não houver ponto anterior ou se faltar altitude. */
+  /* Fails safely if altitude is missing. */
   if (!previous || altitudeFt === null || previous.altitudeFt === null) return null;
 
-  /* Calcula diferença de tempo em minutos. */
-  const diffMinutes = (timestampMs - previous.timestampMs) / 60000;
+  /* Calculates time difference in minutes. */
+  const minutes = (timestampMs - previous.timestampMs) / 60000;
 
-  /* Evita divisão por zero ou intervalos negativos. */
-  if (diffMinutes <= 0) return null;
+  /* Avoids invalid division. */
+  if (minutes <= 0) return null;
 
-  /* Calcula a diferença de altitude em pés. */
-  const diffFeet = altitudeFt - previous.altitudeFt;
-
-  /* Devolve velocidade vertical em pés por minuto. */
-  return diffFeet / diffMinutes;
+  /* Returns feet per minute. */
+  return (altitudeFt - previous.altitudeFt) / minutes;
 }
 
-/* Detecta a fase provável do voo com regras simples e ajustáveis. */
+/* Detects flight phase transitions. */
 function detectPhase(point) {
-  /* Obtém a fase actual antes de decidir nova fase. */
+  /* Reads current phase. */
   const current = state.currentPhase;
 
-  /* Lê a velocidade em nós com fallback para zero quando vier vazia. */
+  /* Reads speed and vertical speed with safe fallbacks. */
   const speedKt = point.speedKt ?? 0;
-
-  /* Lê a razão vertical com fallback para zero quando vier vazia. */
   const vsFpm = point.verticalSpeedFpm ?? 0;
 
-  /* Detecta takeoff a partir do taxi inicial. */
-  if (current === "taxi" && !state.hadTakeoff && speedKt >= settings.takeoffKt) {
-    setPhase("takeoff", point.timeIso, point.timestampMs);
+  /* Updates rough ground altitude reference. */
+  updateGroundReference(point);
+
+  /* Starts with the existing phase. */
+  let next = current === "—" ? "taxi" : current;
+
+  /* Detects takeoff when speed rises from taxi. */
+  if (next === "taxi" && !state.hadTakeoff && speedKt >= settings.takeoffSpeedKt) {
+    next = "takeoff";
+  }
+
+  /* Detects initial climb as the airborne point and starts flight time. */
+  if (next === "takeoff" && speedKt >= settings.initialClimbSpeedKt && (vsFpm >= settings.climbVsFpm || point.altitudeFt === null)) {
+    next = "initial climb";
     state.hadTakeoff = true;
-    return;
+    state.activeSector.takeoffAt = state.activeSector.takeoffAt || point.timeIso;
   }
 
-  /* Detecta initial climb após takeoff com velocidade suficiente e subida positiva. */
-  if (
-    current === "takeoff" &&
-    speedKt >= settings.initialClimbKt &&
-    (vsFpm >= settings.climbVsFpm || enoughTimeInCurrentPhase(point, 12))
-  ) {
-    setPhase("initial climb", point.timeIso, point.timestampMs);
-    return;
+  /* Detects sustained climb. */
+  if (next === "initial climb" && isTrendSustained("climb", settings.stableSeconds)) {
+    next = "climb";
   }
 
-  /* Detecta climb quando a subida fica sustentada. */
-  if (current === "initial climb" && isTrendSustained("climb", settings.stableSeconds, point.timestampMs)) {
-    setPhase("climb", point.timeIso, point.timestampMs);
-    return;
-  }
-
-  /* Detecta TOC quando deixa de haver subida sustentada depois de climb. */
-  if (current === "climb" && !state.hadToc && isTrendSustained("level", settings.stableSeconds, point.timestampMs)) {
-    addEventThenPhase("TOC", "cruise", point.timeIso, point.timestampMs);
+  /* Detects top of climb when vertical speed becomes level. */
+  if (next === "climb" && !state.hadToc && isTrendSustained("level", settings.stableSeconds)) {
+    next = "TOC";
     state.hadToc = true;
-    return;
   }
 
-  /* Permite detectar TOC mesmo se a app saltou initial climb e ficou em takeoff. */
-  if ((current === "takeoff" || current === "initial climb") && !state.hadToc && isTrendSustained("level", settings.stableSeconds, point.timestampMs)) {
-    addEventThenPhase("TOC", "cruise", point.timeIso, point.timestampMs);
-    state.hadToc = true;
-    return;
+  /* Moves from TOC to cruise after a short marker period. */
+  if (next === "TOC" && enoughTimeInCurrentPhase(point, 20)) {
+    next = "cruise";
   }
 
-  /* Detecta TOD quando começa descida sustentada depois de cruise. */
-  if (current === "cruise" && !state.hadTod && isTrendSustained("descent", settings.stableSeconds, point.timestampMs)) {
-    addEventThenPhase("TOD", "descent", point.timeIso, point.timestampMs);
+  /* Detects top of descent after cruise. */
+  if ((next === "cruise" || next === "TOC") && !state.hadTod && isTrendSustained("descent", settings.stableSeconds)) {
+    next = "TOD";
     state.hadTod = true;
-    return;
   }
 
-  /* Detecta descent mesmo que TOC/cruise não tenham sido detectados, se já houve takeoff. */
-  if (!state.hadTod && state.hadTakeoff && isTrendSustained("descent", settings.stableSeconds, point.timestampMs)) {
-    addEventThenPhase("TOD", "descent", point.timeIso, point.timestampMs);
-    state.hadTod = true;
-    return;
+  /* Moves from TOD marker to descent. */
+  if (next === "TOD" && enoughTimeInCurrentPhase(point, 20)) {
+    next = "descent";
   }
 
-  /* Detecta approach sem depender da altitude do aeródromo de partida. */
-  if (
-    current === "descent" &&
-    state.hadTod &&
-    speedKt > settings.landingMaxKt &&
-    speedKt <= settings.approachMaxKt
-  ) {
-    setPhase("approach", point.timeIso, point.timestampMs);
-    return;
+  /* Detects approach by speed after TOD/descent. */
+  if (next === "descent" && state.hadTod && speedKt <= settings.approachTriggerKt && speedKt > settings.landingSpeedKt) {
+    next = "approach";
   }
 
-  /* Detecta landing directamente de descent ou approach quando a velocidade baixa bastante depois de TOD. */
-  if (
-    (current === "descent" || current === "approach") &&
-    state.hadTod &&
-    speedKt <= settings.landingMaxKt
-  ) {
-    setPhase("landing", point.timeIso, point.timestampMs);
+  /* Detects landing after approach/descent without depending on departure elevation. */
+  if ((next === "approach" || next === "descent") && state.hadTod && speedKt <= settings.landingSpeedKt) {
+    next = "landing";
     state.hadLanding = true;
-    return;
+    state.activeSector.landingAt = state.activeSector.landingAt || point.timeIso;
   }
 
-  /* Detecta taxi final quando a velocidade fica abaixo do limite de taxi depois da aterragem. */
-  if (
-    current === "landing" &&
-    state.hadLanding &&
-    speedKt <= settings.taxiMaxKt &&
-    enoughTimeInCurrentPhase(point, 8)
-  ) {
-    setPhase("taxi", point.timeIso, point.timestampMs);
-    return;
-  }
-}
-
-/* Aplica uma correcção final caso o voo termine com baixa velocidade mas a fase continue errada. */
-function applyFinalLandingCorrection(stopIso, stopMs) {
-  /* Obtém o último ponto GPS disponível. */
-  const last = state.points[state.points.length - 1];
-
-  /* Sai se não houver ponto GPS. */
-  if (!last) return;
-
-  /* Lê a velocidade com fallback para zero. */
-  const speedKt = last.speedKt ?? 0;
-
-  /* Só corrige se já houve descida ou TOD. */
-  if (!state.hadTod) return;
-
-  /* Corrige descent/approach para landing quando o avião já está muito lento. */
-  if ((state.currentPhase === "descent" || state.currentPhase === "approach") && speedKt <= settings.landingMaxKt) {
-    setPhase("landing", stopIso, stopMs);
-    state.hadLanding = true;
+  /* Moves from landing to final taxi when speed becomes taxi-like. */
+  if (next === "landing" && speedKt <= settings.taxiMaxKt && enoughTimeInCurrentPhase(point, 10)) {
+    next = "taxi";
   }
 
-  /* Corrige landing para taxi quando a velocidade está dentro do limite de taxi. */
-  if (state.currentPhase === "landing" && speedKt <= settings.taxiMaxKt) {
-    setPhase("taxi", stopIso, stopMs);
+  /* Applies phase transition. */
+  if (next !== current) {
+    setPhase(next, point.timeIso, point.timestampMs);
   }
 }
 
-/* Verifica se deve perguntar se o voo terminou no taxi final. */
-async function checkAutoStop(point) {
-  /* Lê a velocidade com fallback para um valor alto quando não há speed. */
-  const speedKt = point.speedKt ?? 999;
+/* Updates a rough ground reference before departure. */
+function updateGroundReference(point) {
+  /* Does nothing when altitude is missing. */
+  if (point.altitudeFt === null) return;
 
-  /* Só usa auto-stop depois de landing, no taxi final. */
-  const isFinalTaxi = state.currentPhase === "taxi" && state.hadLanding;
-
-  /* Reinicia o candidato se não estamos em taxi final ou se a velocidade subiu. */
-  if (!isFinalTaxi || speedKt > settings.autoStopSpeedKt) {
-    state.autoStopCandidateSinceMs = null;
-    state.autoStopPrompted = false;
-    return;
+  /* Sets the first known ground reference. */
+  if (!state.hadTakeoff && state.lastGroundReferenceFt === null) {
+    state.lastGroundReferenceFt = point.altitudeFt;
   }
 
-  /* Marca o início da paragem se ainda não estava marcado. */
-  if (state.autoStopCandidateSinceMs === null) {
-    state.autoStopCandidateSinceMs = point.timestampMs;
-    return;
+  /* Smooths the reference while taxiing before takeoff. */
+  if (!state.hadTakeoff && state.currentPhase === "taxi") {
+    state.lastGroundReferenceFt = smoothValue(state.lastGroundReferenceFt, point.altitudeFt, 0.15);
   }
-
-  /* Calcula há quanto tempo a velocidade está perto de zero. */
-  const stoppedSeconds = (point.timestampMs - state.autoStopCandidateSinceMs) / 1000;
-
-  /* Sai se ainda não passou o tempo estável definido. */
-  if (stoppedSeconds < settings.autoStopStableSeconds) return;
-
-  /* Evita perguntar repetidamente. */
-  if (state.autoStopPrompted) return;
-
-  /* Marca que a pergunta já foi feita. */
-  state.autoStopPrompted = true;
-
-  /* Pergunta ao utilizador se o voo terminou. */
-  const ended = window.confirm("A velocidade está perto de zero no taxi final. O voo terminou e queres fazer Blocks on?");
-
-  /* Se o utilizador confirmou, pára a gravação e cria blocks on. */
-  if (ended) await stopRecording("auto");
 }
 
-/* Confirma tendências de subida, nível ou descida durante uma janela temporal. */
-function isTrendSustained(type, seconds, referenceMs) {
-  /* Calcula o instante mínimo dos pontos a analisar. */
-  const minTime = referenceMs - seconds * 1000;
+/* Checks whether a vertical-speed trend is sustained. */
+function isTrendSustained(type, seconds) {
+  /* Gets the latest point. */
+  const last = state.activeSector.points[state.activeSector.points.length - 1];
 
-  /* Filtra pontos recentes que tenham velocidade vertical válida. */
-  const recent = state.points.filter((p) => p.timestampMs >= minTime && p.verticalSpeedFpm !== null);
+  /* Fails if there is no latest point. */
+  if (!last) return false;
 
-  /* Exige pelo menos três pontos para reduzir falsos positivos. */
+  /* Defines the start of the analysis window. */
+  const minTime = last.timestampMs - seconds * 1000;
+
+  /* Filters recent points with valid vertical speed. */
+  const recent = state.activeSector.points.filter((p) => p.timestampMs >= minTime && p.verticalSpeedFpm !== null);
+
+  /* Requires enough samples. */
   if (recent.length < 3) return false;
 
-  /* Calcula a média da velocidade vertical recente. */
+  /* Calculates average vertical speed. */
   const avgVs = average(recent.map((p) => p.verticalSpeedFpm));
 
-  /* Confirma subida sustentada. */
+  /* Tests climb. */
   if (type === "climb") return avgVs >= settings.climbVsFpm;
 
-  /* Confirma descida sustentada. */
+  /* Tests descent. */
   if (type === "descent") return avgVs <= -settings.descentVsFpm;
 
-  /* Confirma voo nivelado dentro da banda de cruzeiro. */
+  /* Tests level flight. */
   if (type === "level") return Math.abs(avgVs) <= settings.cruiseVsBandFpm;
 
-  /* Devolve false para tipos desconhecidos. */
+  /* Unknown trend fails. */
   return false;
 }
 
-/* Verifica se já passou tempo suficiente na fase actual. */
+/* Checks if a phase has lasted long enough. */
 function enoughTimeInCurrentPhase(point, seconds) {
-  /* Se não existir hora de mudança, deixa passar. */
+  /* Allows transition when no phase timestamp exists. */
   if (!state.lastPhaseChangeMs) return true;
 
-  /* Compara o timestamp actual com o momento da última mudança. */
+  /* Compares current point time with phase start. */
   return point.timestampMs - state.lastPhaseChangeMs >= seconds * 1000;
 }
 
-/* Adiciona uma linha de evento sem duração nem consumo. */
-function addEventLog(status, timeIso, timestampMs) {
-  /* Cria a linha de evento no log. */
-  state.logs.push({
-    status,
-    startTime: timeIso,
-    startMs: timestampMs,
-    endTime: timeIso,
-    endMs: timestampMs,
-    rateLbh: 0,
-    isEvent: true
-  });
-}
-
-/* Fecha a fase actual, adiciona um evento e começa uma nova fase. */
-function addEventThenPhase(eventStatus, nextPhase, timeIso, timestampMs) {
-  /* Fecha a fase em curso no instante do evento. */
-  closeCurrentPhase(timeIso, timestampMs);
-
-  /* Adiciona o evento ao log. */
-  addEventLog(eventStatus, timeIso, timestampMs);
-
-  /* Começa a fase seguinte no mesmo instante. */
-  beginPhase(nextPhase, timeIso, timestampMs);
-}
-
-/* Muda a fase actual e actualiza a tabela de log. */
+/* Adds a new phase to the current sector log. */
 function setPhase(phase, timeIso, timestampMs) {
-  /* Fecha a linha de log anterior com o início da nova fase. */
-  closeCurrentPhase(timeIso, timestampMs);
+  /* Closes the previous open log line. */
+  closeCurrentLog(timeIso);
 
-  /* Começa a nova fase. */
-  beginPhase(phase, timeIso, timestampMs);
-}
-
-/* Começa uma nova fase com consumo configurado. */
-function beginPhase(phase, timeIso, timestampMs) {
-  /* Define a nova fase actual. */
+  /* Stores the new current phase. */
   state.currentPhase = phase;
 
-  /* Guarda o timestamp da mudança. */
+  /* Stores the phase timestamp. */
   state.lastPhaseChangeMs = timestampMs;
 
-  /* Cria uma nova linha de log aberta. */
-  state.logs.push({
+  /* Adds the new open log line. */
+  state.activeSector.logs.push({
     status: phase,
     startTime: timeIso,
-    startMs: timestampMs,
     endTime: null,
-    endMs: null,
-    rateLbh: getFuelRateForPhase(phase),
-    isEvent: false
+    consumptionLb: 0,
+    rateLbh: fuelRateForStatus(phase)
   });
 }
 
-/* Fecha a linha de fase aberta, se existir. */
-function closeCurrentPhase(timeIso, timestampMs) {
-  /* Obtém a última linha do log. */
-  const lastLog = state.logs[state.logs.length - 1];
+/* Closes the current log line. */
+function closeCurrentLog(endIso) {
+  /* Gets the last log line. */
+  const log = state.activeSector.logs[state.activeSector.logs.length - 1];
 
-  /* Não faz nada se não houver linha, se for evento, ou se já estiver fechada. */
-  if (!lastLog || lastLog.isEvent || lastLog.endTime) return;
+  /* Exits if there is no open log. */
+  if (!log || log.endTime) return;
 
-  /* Fecha a linha com a hora indicada. */
-  lastLog.endTime = timeIso;
+  /* Stores the end time. */
+  log.endTime = endIso;
 
-  /* Fecha a linha com o timestamp indicado. */
-  lastLog.endMs = timestampMs;
+  /* Recalculates consumption. */
+  log.consumptionLb = calculateLogConsumption(log, endIso);
 }
 
-/* Devolve a razão de consumo para uma fase nova. */
-function getFuelRateForPhase(phase) {
-  /* Eventos não têm consumo. */
-  if (phase === "blocks off" || phase === "blocks on" || phase === "TOC" || phase === "TOD") return 0;
+/* Checks whether the app should ask about next sector or blocks on. */
+async function maybeAskAutoStop(point) {
+  /* Only checks while recording. */
+  if (!state.isRecording) return;
 
-  /* Fases antes de TOC usam 720 lb/h por defeito. */
-  if (!state.hadToc && ["taxi", "takeoff", "initial climb", "climb"].includes(phase)) return settings.fuelBeforeTocLbh;
+  /* Only checks after landing and during final taxi. */
+  if (!state.hadLanding || state.currentPhase !== "taxi") return;
 
-  /* Cruise usa 600 lb/h por defeito. */
-  if (phase === "cruise") return settings.fuelCruiseLbh;
+  /* Reads speed with a safe high fallback. */
+  const speedKt = point.speedKt ?? 999;
 
-  /* Fases depois de TOD usam 580 lb/h por defeito. */
-  if (["descent", "approach", "landing", "taxi"].includes(phase)) return settings.fuelDescentLbh;
+  /* Resets stopped timer if speed rises. */
+  if (speedKt > settings.autoStopKt) {
+    stoppedSinceMs = null;
+    return;
+  }
 
-  /* Usa zero para qualquer fase desconhecida. */
-  return 0;
+  /* Starts stopped timer if needed. */
+  if (stoppedSinceMs === null) {
+    stoppedSinceMs = point.timestampMs;
+    return;
+  }
+
+  /* Calculates stopped duration. */
+  const stoppedSeconds = (point.timestampMs - stoppedSinceMs) / 1000;
+
+  /* Waits until the threshold is reached. */
+  if (stoppedSeconds < settings.autoStopSeconds || autoStopPromptOpen) return;
+
+  /* Blocks repeated prompts. */
+  autoStopPromptOpen = true;
+
+  /* Asks the user to choose next sector or blocks on. */
+  const nextSector = window.confirm("Aircraft appears stopped after final taxi. OK = save and start NEXT SECTOR. Cancel = save and stop at BLOCKS-ON.");
+
+  /* Finalizes and optionally starts the next sector. */
+  await finalizeCurrentSector(nextSector);
+
+  /* Releases prompt lock. */
+  autoStopPromptOpen = false;
 }
 
-/* Calcula o consumo de uma linha de log. */
-function calculateLogConsumptionLb(log) {
-  /* Eventos têm consumo zero. */
-  if (log.isEvent) return 0;
+/* Updates times and fuel totals for a sector. */
+function updateSectorTotals(sector) {
+  /* Updates live consumption for an open log. */
+  updateOpenLogConsumption(sector);
 
-  /* Usa o fim da fase se existir, caso contrário usa o último ponto ou agora. */
-  const endMs = log.endMs || getCurrentCalculationMs();
+  /* Calculates block time. */
+  sector.totals.blockSeconds = secondsBetween(sector.blockOffAt, sector.blockOnAt || new Date().toISOString());
 
-  /* Evita durações negativas. */
-  const durationMs = Math.max(0, endMs - log.startMs);
+  /* Calculates flight time from airborne detection to landing detection. */
+  sector.totals.flightSeconds = secondsBetween(sector.takeoffAt, sector.landingAt || (sector.takeoffAt ? new Date().toISOString() : null));
 
-  /* Converte duração para horas. */
-  const hours = durationMs / 3600000;
-
-  /* Multiplica horas pelo consumo horário da fase. */
-  return hours * (log.rateLbh || 0);
+  /* Sums fuel from all phase logs. */
+  sector.totals.fuelLb = sector.logs.reduce((sum, log) => sum + (Number(log.consumptionLb) || 0), 0);
 }
 
-/* Calcula o consumo total actual da sessão. */
-function calculateTotalFuelLb() {
-  /* Soma o consumo de todas as linhas do log. */
-  return state.logs.reduce((sum, log) => sum + calculateLogConsumptionLb(log), 0);
+/* Updates the currently open log consumption. */
+function updateOpenLogConsumption(sector) {
+  /* Gets the latest log. */
+  const log = sector.logs[sector.logs.length - 1];
+
+  /* Exits if there is no open log. */
+  if (!log || log.endTime) return;
+
+  /* Calculates live consumption up to now. */
+  log.consumptionLb = calculateLogConsumption(log, new Date().toISOString());
 }
 
-/* Obtém o timestamp a usar para consumos dinâmicos. */
-function getCurrentCalculationMs() {
-  /* Obtém o último ponto GPS disponível. */
-  const last = state.points[state.points.length - 1];
+/* Calculates fuel consumption for one log line. */
+function calculateLogConsumption(log, fallbackEndIso) {
+  /* Determines end time. */
+  const endIso = log.endTime || fallbackEndIso;
 
-  /* Usa o timestamp do último ponto se a app está a gravar. */
-  if (state.isRecording && last) return last.timestampMs;
+  /* Returns zero when times are missing. */
+  if (!log.startTime || !endIso) return 0;
 
-  /* Usa agora como fallback. */
-  return Date.now();
+  /* Calculates duration in hours. */
+  const hours = secondsBetween(log.startTime, endIso) / 3600;
+
+  /* Uses the rate stored when the phase started. */
+  const rate = Number(log.rateLbh ?? fuelRateForStatus(log.status));
+
+  /* Returns fuel in pounds. */
+  return hours * rate;
 }
 
-/* Actualiza a interface completa com base no estado actual. */
+/* Returns the fuel rate for a phase. */
+function fuelRateForStatus(status) {
+  /* Cruise uses cruise fuel. */
+  if (status === "cruise") return settings.fuelCruiseLbh;
+
+  /* Descent side uses descent/approach fuel. */
+  if (["TOD", "descent", "approach", "landing", "blocks on"].includes(status)) return settings.fuelDescentApproachLbh;
+
+  /* Final taxi after landing uses descent/approach fuel. */
+  if (status === "taxi" && state.hadLanding) return settings.fuelDescentApproachLbh;
+
+  /* All pre-TOC phases use fuel until TOC. */
+  return settings.fuelUntilTocLbh;
+}
+
+/* Attempts to identify departure and destination airports. */
+async function resolveSectorAirports(sector) {
+  /* Gets first and last points. */
+  const first = sector.points[0];
+  const last = sector.points[sector.points.length - 1];
+
+  /* Attempts departure lookup. */
+  if (first && !sector.departure) sector.departure = await lookupAirport(first);
+
+  /* Attempts destination lookup. */
+  if (last && !sector.destination) sector.destination = await lookupAirport(last);
+
+  /* Builds an automatic sector name if both ends are known. */
+  if (sector.departure && sector.destination) {
+    const dep = sector.departure.icao || sector.departure.iata || sector.departure.name || "DEP";
+    const dst = sector.destination.icao || sector.destination.iata || sector.destination.name || "DEST";
+    sector.name = `Sector ${sector.number} ${dep}-${dst}`;
+  }
+}
+
+/* Looks up the nearest airport online from coordinates. */
+async function lookupAirport(point) {
+  /* Skips lookup when offline. */
+  if (!navigator.onLine) return null;
+
+  /* Tries the OurAirports public CSV first because it contains ICAO-style identifiers. */
+  const fromCsv = await lookupAirportFromOurAirports(point);
+
+  /* Returns CSV result when found. */
+  if (fromCsv) return fromCsv;
+
+  /* Falls back to OpenStreetMap reverse lookup. */
+  return await lookupAirportFromOsm(point);
+}
+
+/* Looks up nearest airport from the OurAirports CSV. */
+async function lookupAirportFromOurAirports(point) {
+  /* Defines the public CSV URL. */
+  const url = "https://davidmegginson.github.io/ourairports-data/airports.csv";
+
+  /* Tries to download and parse the CSV. */
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const text = await response.text();
+    const rows = parseCsv(text);
+    let best = null;
+
+    /* Scans airports and keeps the nearest valid one. */
+    for (const row of rows.slice(1)) {
+      const type = row[2];
+      const name = row[3];
+      const lat = Number(row[4]);
+      const lon = Number(row[5]);
+      const ident = row[1];
+      const iata = row[13];
+      if (!type || type.includes("closed") || type === "heliport") continue;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const distanceKm = haversineKm(point.latitude, point.longitude, lat, lon);
+      if (!best || distanceKm < best.distanceKm) {
+        best = { icao: looksLikeIcao(ident) ? ident : null, iata: iata || null, name, distanceKm, source: "OurAirports" };
+      }
+    }
+
+    /* Accepts only airports within a practical radius. */
+    return best && best.distanceKm <= 15 ? best : null;
+  } catch {
+    return null;
+  }
+}
+
+/* Falls back to OpenStreetMap reverse geocoding. */
+async function lookupAirportFromOsm(point) {
+  /* Builds a reverse geocoding URL. */
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(point.latitude)}&lon=${encodeURIComponent(point.longitude)}&zoom=14&addressdetails=1&extratags=1&namedetails=1`;
+
+  /* Tries to get a nearby place/airport name. */
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const name = data?.namedetails?.name || data?.name || data?.display_name?.split(",")[0] || null;
+    const icao = extractIcao(`${data?.extratags?.icao || ""} ${data?.display_name || ""}`);
+    return name || icao ? { icao, iata: null, name, distanceKm: null, source: "OpenStreetMap" } : null;
+  } catch {
+    return null;
+  }
+}
+
+/* Ensures a closed sector has a usable name. */
+async function ensureSectorName(sector) {
+  /* Keeps a route-derived name. */
+  if (sector.name && sector.name !== `Sector ${sector.number}`) return;
+
+  /* Creates a fallback suggestion. */
+  const dep = sector.departure?.icao || sector.departure?.iata || sector.departure?.name || "DEP";
+  const dst = sector.destination?.icao || sector.destination?.iata || sector.destination?.name || "DEST";
+  const suggestion = dep !== "DEP" || dst !== "DEST" ? `Sector ${sector.number} ${dep}-${dst}` : `Sector ${sector.number}`;
+
+  /* Asks the user for a sector name. */
+  const name = window.prompt("Could not reliably identify departure/destination. Enter sector name:", suggestion);
+
+  /* Stores manual or suggested name. */
+  sector.name = (name && name.trim()) || suggestion;
+}
+
+/* Renders the complete UI. */
 function render() {
-  /* Actualiza botões principais. */
+  /* Updates buttons. */
   ui.startBtn.disabled = state.isRecording;
   ui.stopBtn.disabled = !state.isRecording;
 
-  /* Actualiza badge de gravação. */
-  ui.recordingBadge.textContent = state.isRecording ? "A gravar" : "Parado";
+  /* Updates recording badge. */
+  ui.recordingBadge.textContent = state.isRecording ? "Recording" : "Stopped";
   ui.recordingBadge.className = state.isRecording ? "badge badge-ok" : "badge badge-muted";
 
-  /* Actualiza fase principal. */
+  /* Updates sector heading. */
+  ui.sectorBadge.textContent = `Sector ${state.activeSector.number}`;
+  ui.sectorName.textContent = state.activeSector.name;
+  ui.sectorRoute.textContent = routeText(state.activeSector);
+
+  /* Updates current flight status. */
   ui.flightStatus.textContent = state.currentPhase;
 
-  /* Obtém o último ponto, se existir. */
-  const last = state.points[state.points.length - 1];
+  /* Updates time displays. */
+  updateSectorTotals(state.activeSector);
+  ui.flightTime.textContent = formatDuration(state.activeSector.totals.flightSeconds);
+  ui.blockTime.textContent = `Block time ${formatDuration(state.activeSector.totals.blockSeconds)}`;
 
-  /* Actualiza métricas se já houver GPS. */
+  /* Reads the last GPS point. */
+  const last = state.activeSector.points[state.activeSector.points.length - 1];
+
+  /* Updates GPS-dependent values. */
   if (last) {
-    ui.gpsStatus.textContent = state.isRecording ? "Activo" : "Parado";
-    ui.gpsDetails.textContent = `Precisão ${formatNumber(last.accuracyM, 0)} m · ${formatTime(last.timeIso)}`;
+    ui.gpsStatus.textContent = "Active";
+    ui.gpsDetails.textContent = `Accuracy ${formatNumber(last.accuracyM, 0)} m · ${formatTime(last.timeIso)}`;
     ui.speedKt.textContent = formatNumber(last.speedKt, 1);
     ui.speedMs.textContent = `${formatNumber(last.speedMs, 1)} m/s`;
     ui.altitudeFt.textContent = formatNumber(last.altitudeFt, 0);
     ui.verticalSpeed.textContent = `VS ${formatNumber(last.verticalSpeedFpm, 0)} ft/min`;
-    ui.flightDetails.textContent = buildFlightDetails(last);
+    ui.flightDetails.textContent = `Heading ${formatNumber(last.headingDeg, 0)}° · Points ${state.activeSector.points.length}`;
   } else {
+    ui.gpsStatus.textContent = state.isRecording ? "Searching" : "Waiting";
+    ui.gpsDetails.textContent = state.isRecording ? "Waiting for GPS fix." : "No GPS points received.";
     ui.speedKt.textContent = "—";
     ui.speedMs.textContent = "— m/s";
     ui.altitudeFt.textContent = "—";
     ui.verticalSpeed.textContent = "VS — ft/min";
+    ui.flightDetails.textContent = "Start recording to detect phases.";
   }
 
-  /* Actualiza total de combustível. */
-  ui.totalFuelLb.textContent = formatNumber(calculateTotalFuelLb(), 1);
-
-  /* Actualiza fuel rate actual. */
-  ui.currentFuelRate.textContent = `Rate ${formatNumber(getCurrentFuelRate(), 0)} lb/h`;
-
-  /* Actualiza a tabela de fases. */
+  /* Updates tables and GPS preview. */
   renderLogTable();
-
-  /* Actualiza lista de pontos recentes. */
+  renderSectorsTable();
   renderLastPoints();
 }
 
-/* Obtém a razão de consumo da linha aberta actual. */
-function getCurrentFuelRate() {
-  /* Obtém a última linha do log. */
-  const lastLog = state.logs[state.logs.length - 1];
-
-  /* Devolve zero se não houver linha ou se a última linha for evento. */
-  if (!lastLog || lastLog.isEvent) return 0;
-
-  /* Devolve a razão de consumo da fase actual. */
-  return lastLog.rateLbh || 0;
-}
-
-/* Mostra a tabela de log de fases. */
+/* Renders the active sector log table. */
 function renderLogTable() {
-  /* Limpa a tabela actual. */
+  /* Clears existing rows. */
   ui.logTableBody.innerHTML = "";
 
-  /* Mostra linha vazia se não houver logs. */
-  if (state.logs.length === 0) {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="3" class="muted">Sem fases registadas.</td>`;
-    ui.logTableBody.appendChild(row);
+  /* Shows an empty state. */
+  if (state.activeSector.logs.length === 0) {
+    ui.logTableBody.innerHTML = '<tr><td colspan="3" class="muted">No phases recorded.</td></tr>';
     return;
   }
 
-  /* Cria uma linha por cada entrada no log. */
-  for (const log of state.logs) {
+  /* Renders each phase row. */
+  for (const log of state.activeSector.logs) {
     const row = document.createElement("tr");
-    const consumption = calculateLogConsumptionLb(log);
-    row.innerHTML = `
-      <td>${escapeHtml(log.status)}</td>
-      <td>${formatTime(log.startTime)}</td>
-      <td>${formatNumber(consumption, 1)} lb</td>
-    `;
+    row.innerHTML = `<td>${escapeHtml(log.status)}</td><td>${formatTime(log.startTime)}</td><td>${formatNumber(log.consumptionLb, 1)} lb</td>`;
     ui.logTableBody.appendChild(row);
   }
 }
 
-/* Mostra os últimos pontos GPS em formato compacto. */
+/* Renders saved sectors table. */
+function renderSectorsTable() {
+  /* Clears the table. */
+  ui.sectorsTableBody.innerHTML = "";
+
+  /* Updates saved count. */
+  ui.savedSectorCount.textContent = `${state.savedSectors.length} saved`;
+
+  /* Shows empty state. */
+  if (state.savedSectors.length === 0) {
+    ui.sectorsTableBody.innerHTML = '<tr><td colspan="5" class="muted">No saved sectors yet.</td></tr>';
+    return;
+  }
+
+  /* Renders saved sectors. */
+  for (const sector of state.savedSectors) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td>Sector ${sector.number}</td><td>${escapeHtml(sector.name)}</td><td>${formatDuration(sector.totals.blockSeconds)}</td><td>${formatDuration(sector.totals.flightSeconds)}</td><td>${formatNumber(sector.totals.fuelLb, 1)} lb</td>`;
+    ui.sectorsTableBody.appendChild(row);
+  }
+}
+
+/* Renders the last five GPS points. */
 function renderLastPoints() {
-  /* Actualiza contador total de pontos. */
-  ui.pointCount.textContent = `${state.points.length} pontos`;
+  /* Updates point count. */
+  ui.pointCount.textContent = `${state.activeSector.points.length} points`;
 
-  /* Obtém os últimos cinco pontos. */
-  const lastFive = state.points.slice(-5).map((p) => ({
-    time: formatTime(p.timeIso),
-    lat: round(p.latitude, 6),
-    lon: round(p.longitude, 6),
-    altFt: round(p.altitudeFt, 0),
-    speedKt: round(p.speedKt, 1),
-    vsFpm: round(p.verticalSpeedFpm, 0)
-  }));
+  /* Prepares the last five points. */
+  const points = state.activeSector.points.slice(-5).map((p) => ({ time: formatTime(p.timeIso), lat: round(p.latitude, 6), lon: round(p.longitude, 6), altFt: round(p.altitudeFt, 0), speedKt: round(p.speedKt, 1), vsFpm: round(p.verticalSpeedFpm, 0) }));
 
-  /* Mostra mensagem simples quando não há pontos. */
-  if (lastFive.length === 0) {
-    ui.lastPoints.textContent = "Sem dados.";
-    return;
-  }
-
-  /* Mostra os pontos como JSON formatado. */
-  ui.lastPoints.textContent = JSON.stringify(lastFive, null, 2);
+  /* Shows preview text. */
+  ui.lastPoints.textContent = points.length ? JSON.stringify(points, null, 2) : "No data.";
 }
 
-/* Cria uma descrição curta do estado do voo. */
-function buildFlightDetails(point) {
-  /* Devolve uma linha resumida para a UI. */
-  return `Heading ${formatNumber(point.headingDeg, 0)}° · TOC ${state.hadToc ? "sim" : "não"} · TOD ${state.hadTod ? "sim" : "não"}`;
+/* Builds the current route text. */
+function routeText(sector) {
+  /* Gets departure label. */
+  const dep = sector.departure?.icao || sector.departure?.iata || sector.departure?.name || "—";
+
+  /* Gets destination label. */
+  const dst = sector.destination?.icao || sector.destination?.iata || sector.destination?.name || "—";
+
+  /* Returns readable route text. */
+  return `Departure ${dep} · Destination ${dst}`;
 }
 
-/* Define explicitamente o estado GPS na UI. */
+/* Sets GPS status text. */
 function setGpsStatus(status, details) {
-  /* Actualiza o título do estado GPS. */
+  /* Updates GPS title. */
   ui.gpsStatus.textContent = status;
 
-  /* Actualiza a linha de detalhe do GPS. */
+  /* Updates GPS details. */
   ui.gpsDetails.textContent = details;
 }
 
-/* Alterna entre separadores Flight e Settings. */
+/* Switches tabs. */
 function setTab(tab) {
-  /* Decide se o separador activo é o de voo. */
+  /* Calculates whether flight tab is active. */
   const isFlight = tab === "flight";
 
-  /* Activa/desactiva painel de voo. */
+  /* Shows/hides panels. */
   ui.tabFlight.classList.toggle("active", isFlight);
-
-  /* Activa/desactiva painel de settings. */
   ui.tabSettings.classList.toggle("active", !isFlight);
 
-  /* Activa/desactiva botão de voo. */
+  /* Highlights active nav button. */
   ui.flightTabBtn.classList.toggle("active", isFlight);
-
-  /* Activa/desactiva botão de settings. */
   ui.settingsTabBtn.classList.toggle("active", !isFlight);
 }
 
-/* Lê settings do localStorage com fallback para defaults. */
+/* Loads settings from localStorage. */
 function loadSettings() {
-  /* Tenta ler JSON guardado. */
-  try {
-    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
-
-    /* Junta defaults com valores guardados para tolerar campos novos. */
-    return { ...DEFAULT_SETTINGS, ...(saved || {}) };
-  } catch {
-    /* Usa defaults se o JSON estiver inválido. */
-    return { ...DEFAULT_SETTINGS };
-  }
+  /* Attempts to parse saved settings. */
+  try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}) }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
 }
 
-/* Preenche o formulário de settings. */
+/* Writes settings into form fields. */
 function fillSettingsForm() {
-  /* Percorre cada campo conhecido de settings. */
-  for (const key of Object.keys(settingInputs)) {
-    /* Escreve o valor actual no input correspondente. */
-    settingInputs[key].value = settings[key];
-  }
+  /* Loops through every setting input. */
+  for (const key of Object.keys(settingInputs)) settingInputs[key].value = settings[key];
 }
 
-/* Guarda settings a partir dos inputs. */
+/* Saves settings from form fields. */
 function saveSettingsFromForm() {
-  /* Percorre cada campo e converte o valor para número. */
-  for (const key of Object.keys(settingInputs)) {
-    settings[key] = Number(settingInputs[key].value);
-  }
+  /* Reads all values as numbers. */
+  for (const key of Object.keys(settingInputs)) settings[key] = Number(settingInputs[key].value);
 
-  /* Guarda as settings no localStorage. */
+  /* Saves settings. */
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 
-  /* Mostra uma confirmação simples. */
-  alert("Settings guardadas.");
+  /* Confirms save. */
+  alert("Settings saved.");
 }
 
-/* Repõe as settings recomendadas por defeito. */
+/* Restores default settings. */
 function restoreDefaultSettings() {
-  /* Copia os valores padrão para as settings activas. */
+  /* Copies defaults. */
   settings = { ...DEFAULT_SETTINGS };
 
-  /* Guarda os defaults no localStorage. */
+  /* Saves defaults. */
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 
-  /* Actualiza o formulário com os defaults. */
+  /* Updates form. */
   fillSettingsForm();
 }
 
-/* Guarda o resumo da sessão no localStorage. */
-function saveSession() {
-  /* Cria uma cópia leve sem duplicar todos os pontos no localStorage. */
-  const summary = {
-    ...state,
-    points: state.points.slice(-100)
-  };
-
-  /* Guarda o resumo em JSON. */
-  localStorage.setItem(SESSION_KEY, JSON.stringify(summary));
+/* Saves current state to localStorage. */
+function saveState() {
+  /* Stores a JSON copy locally. */
+  localStorage.setItem(STATE_KEY, JSON.stringify(state));
 }
 
-/* Carrega a sessão guardada do localStorage. */
-async function loadSession() {
-  /* Tenta ler a sessão guardada. */
-  try {
-    const saved = JSON.parse(localStorage.getItem(SESSION_KEY));
-
-    /* Sai se não houver sessão. */
-    if (!saved) return;
-
-    /* Restaura o estado com fallback para valores seguros. */
-    state = {
-      ...createEmptyState(),
-      ...saved,
-      isRecording: false
-    };
-
-    /* Tenta carregar todos os pontos da IndexedDB. */
-    const pointsFromDb = await getAllPointsFromDb();
-
-    /* Usa IndexedDB se houver pontos guardados. */
-    if (pointsFromDb.length > 0) state.points = pointsFromDb;
-  } catch {
-    /* Ignora sessões inválidas para não bloquear a app. */
-  }
+/* Loads state from localStorage. */
+function loadState() {
+  /* Attempts to parse saved state. */
+  try { return JSON.parse(localStorage.getItem(STATE_KEY)); }
+  catch { return null; }
 }
 
-/* Exporta a tabela de fases para CSV. */
+/* Deletes all local data. */
+async function resetAll() {
+  /* Asks for confirmation. */
+  if (!window.confirm("Delete all active and saved sectors from this device?")) return;
+
+  /* Stops GPS if needed. */
+  await stopGpsOnly();
+
+  /* Resets state. */
+  state = createInitialState();
+
+  /* Removes saved state. */
+  localStorage.removeItem(STATE_KEY);
+
+  /* Resets auto-stop. */
+  stoppedSinceMs = null;
+  autoStopPromptOpen = false;
+
+  /* Renders the clean UI. */
+  render();
+}
+
+/* Exports all sectors to CSV. */
 function exportCsv() {
-  /* Define o cabeçalho do CSV. */
-  const rows = [["status", "start_time", "consumption_lb", "rate_lb_per_hour", "end_time"]];
+  /* Gets sectors to export. */
+  const sectors = exportableSectors();
 
-  /* Adiciona cada linha de log ao CSV. */
-  for (const log of state.logs) {
-    rows.push([
-      log.status,
-      log.startTime,
-      calculateLogConsumptionLb(log).toFixed(1),
-      log.rateLbh || 0,
-      log.endTime || ""
-    ]);
+  /* Defines CSV headers. */
+  const rows = [["sector_number", "sector_name", "departure", "destination", "status", "start_time", "end_time", "consumption_lb", "block_time", "flight_time", "total_fuel_lb"]];
+
+  /* Adds one row per phase. */
+  for (const sector of sectors) {
+    updateSectorTotals(sector);
+    for (const log of sector.logs) {
+      rows.push([sector.number, sector.name, sector.departure?.icao || sector.departure?.iata || sector.departure?.name || "", sector.destination?.icao || sector.destination?.iata || sector.destination?.name || "", log.status, log.startTime, log.endTime || "", round(log.consumptionLb, 1), formatDuration(sector.totals.blockSeconds), formatDuration(sector.totals.flightSeconds), round(sector.totals.fuelLb, 1)]);
+    }
   }
 
-  /* Converte as linhas para texto CSV. */
-  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
-
-  /* Descarrega o ficheiro CSV no browser. */
-  downloadTextFile("flight-log.csv", "text/csv", csv);
+  /* Downloads CSV. */
+  downloadTextFile("flight-sectors.csv", "text/csv", rows.map((row) => row.map(csvCell).join(",")).join("\n"));
 }
 
-/* Exporta a sessão completa para JSON. */
+/* Exports all sectors to JSON. */
 function exportJson() {
-  /* Cria objecto completo de exportação. */
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    settings,
-    totalFuelLb: calculateTotalFuelLb(),
-    session: state,
-    computedLogs: state.logs.map((log) => ({
-      ...log,
-      consumptionLb: calculateLogConsumptionLb(log)
-    }))
-  };
+  /* Builds export payload. */
+  const payload = { exportedAt: new Date().toISOString(), settings, sectors: exportableSectors() };
 
-  /* Converte o objecto para JSON legível. */
-  const json = JSON.stringify(payload, null, 2);
-
-  /* Descarrega o ficheiro JSON no browser. */
-  downloadTextFile("flight-session.json", "application/json", json);
+  /* Downloads JSON. */
+  downloadTextFile("flight-sectors.json", "application/json", JSON.stringify(payload, null, 2));
 }
 
-/* Descarrega um ficheiro de texto gerado localmente. */
+/* Returns sectors that should be exported. */
+function exportableSectors() {
+  /* Clones saved sectors. */
+  const sectors = state.savedSectors.map(clone);
+
+  /* Adds the active sector if it contains data and is not closed/saved. */
+  if (state.activeSector.logs.length > 0 && !state.activeSector.blockOnAt) sectors.push(clone(state.activeSector));
+
+  /* Returns all exportable sectors. */
+  return sectors;
+}
+
+/* Downloads a generated text file. */
 function downloadTextFile(filename, mimeType, content) {
-  /* Cria um Blob com o conteúdo do ficheiro. */
+  /* Creates a Blob. */
   const blob = new Blob([content], { type: mimeType });
 
-  /* Cria um URL temporário para o Blob. */
+  /* Creates a temporary URL. */
   const url = URL.createObjectURL(blob);
 
-  /* Cria uma hiperligação temporária. */
+  /* Creates a temporary link. */
   const a = document.createElement("a");
 
-  /* Define o URL do ficheiro gerado. */
+  /* Defines link target. */
   a.href = url;
 
-  /* Define o nome do ficheiro a descarregar. */
+  /* Defines download filename. */
   a.download = filename;
 
-  /* Adiciona o link ao documento para permitir click programático. */
+  /* Adds link to document. */
   document.body.appendChild(a);
 
-  /* Simula um click para iniciar download. */
+  /* Starts download. */
   a.click();
 
-  /* Remove o link temporário. */
+  /* Removes link. */
   a.remove();
 
-  /* Liberta o URL temporário da memória. */
+  /* Releases the temporary URL. */
   URL.revokeObjectURL(url);
 }
 
-/* Prepara uma célula CSV com aspas quando necessário. */
+/* Escapes a CSV cell. */
 function csvCell(value) {
-  /* Converte valor null/undefined para string vazia. */
+  /* Converts nullish values to empty text. */
   const text = value === null || value === undefined ? "" : String(value);
 
-  /* Escapa aspas internas duplicando-as. */
-  const escaped = text.replaceAll('"', '""');
-
-  /* Envolve o texto entre aspas para CSV seguro. */
-  return `"${escaped}"`;
+  /* Escapes double quotes. */
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
-/* Pede Wake Lock para manter o ecrã activo, quando suportado. */
+/* Requests a screen wake lock. */
 async function requestWakeLock() {
-  /* Verifica se o browser suporta Wake Lock. */
+  /* Exits if unsupported. */
   if (!("wakeLock" in navigator)) return;
 
-  /* Tenta pedir bloqueio de ecrã. */
-  try {
-    wakeLock = await navigator.wakeLock.request("screen");
-
-    /* Limpa referência quando o bloqueio for libertado pelo sistema. */
-    wakeLock.addEventListener("release", () => {
-      wakeLock = null;
-    });
-  } catch {
-    /* Ignora falhas porque a gravação GPS pode continuar sem Wake Lock. */
-  }
+  /* Tries to keep the screen awake. */
+  try { wakeLock = await navigator.wakeLock.request("screen"); }
+  catch { wakeLock = null; }
 }
 
-/* Liberta o Wake Lock quando a gravação pára. */
+/* Releases the wake lock. */
 async function releaseWakeLock() {
-  /* Sai se não existir bloqueio activo. */
+  /* Exits if there is no lock. */
   if (!wakeLock) return;
 
-  /* Tenta libertar o bloqueio de ecrã. */
-  try {
-    await wakeLock.release();
-  } catch {
-    /* Ignora falhas de libertação. */
-  }
+  /* Tries to release it. */
+  try { await wakeLock.release(); } catch {}
 
-  /* Limpa referência local. */
+  /* Clears reference. */
   wakeLock = null;
 }
 
-/* Volta a pedir Wake Lock quando a página volta a ficar visível. */
+/* Restores wake lock when returning to the visible page. */
 document.addEventListener("visibilitychange", async () => {
-  /* Só tenta recuperar Wake Lock se a app estiver a gravar e visível. */
+  /* Requests wake lock again when visible and recording. */
   if (state.isRecording && document.visibilityState === "visible") await requestWakeLock();
 });
 
-/* Regista o service worker para PWA offline. */
-function registerServiceWorker() {
-  /* Confirma suporte de service workers no browser. */
-  if (!("serviceWorker" in navigator)) return;
+/* Starts the one-second UI timer. */
+function startUiTimer() {
+  /* Clears a previous timer if it exists. */
+  if (uiTimerId) clearInterval(uiTimerId);
 
-  /* Regista o ficheiro sw.js depois de a página carregar. */
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
-      /* Ignora erro para não interromper a app em browsers sem suporte. */
-    });
-  });
+  /* Updates time values every second. */
+  uiTimerId = setInterval(() => { if (state.activeSector) { updateSectorTotals(state.activeSector); renderLogTable(); ui.flightTime.textContent = formatDuration(state.activeSector.totals.flightSeconds); ui.blockTime.textContent = `Block time ${formatDuration(state.activeSector.totals.blockSeconds)}`; } }, 1000);
 }
 
-/* Converte metros por segundo para nós. */
+/* Registers the service worker. */
+function registerServiceWorker() {
+  /* Exits if service workers are unsupported. */
+  if (!("serviceWorker" in navigator)) return;
+
+  /* Registers on page load. */
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+
+/* Parses a simple CSV into arrays. */
+function parseCsv(text) {
+  /* Stores parsed rows. */
+  const rows = [];
+
+  /* Stores the current row and cell. */
+  let row = [], cell = "", inQuotes = false;
+
+  /* Reads the file character by character. */
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (char === '"' && inQuotes && next === '"') { cell += '"'; i++; }
+    else if (char === '"') inQuotes = !inQuotes;
+    else if (char === "," && !inQuotes) { row.push(cell); cell = ""; }
+    else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i++;
+      row.push(cell); rows.push(row); row = []; cell = "";
+    } else cell += char;
+  }
+
+  /* Adds the final cell. */
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+
+  /* Returns rows. */
+  return rows;
+}
+
+/* Calculates distance between two coordinates. */
+function haversineKm(lat1, lon1, lat2, lon2) {
+  /* Defines Earth radius in kilometres. */
+  const r = 6371;
+
+  /* Converts degrees to radians. */
+  const toRad = (v) => v * Math.PI / 180;
+
+  /* Calculates deltas. */
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+
+  /* Calculates haversine value. */
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+
+  /* Returns distance. */
+  return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/* Checks whether a text looks like an ICAO code. */
+function looksLikeIcao(value) {
+  /* Tests four capital letters/numbers, but prefers ICAO-like airport identifiers. */
+  return /^[A-Z][A-Z0-9]{3}$/.test(value || "");
+}
+
+/* Extracts an ICAO-looking code from text. */
+function extractIcao(text) {
+  /* Finds a four-letter uppercase code. */
+  const match = String(text || "").match(/\b[A-Z]{4}\b/);
+
+  /* Returns the code or null. */
+  return match ? match[0] : null;
+}
+
+/* Converts metres per second to knots. */
 function msToKnots(ms) {
-  /* Devolve null quando a velocidade não vem no GPS. */
+  /* Returns null if speed is missing. */
   if (ms === null || ms === undefined || Number.isNaN(ms)) return null;
 
-  /* Usa o factor aproximado de m/s para kt. */
+  /* Converts m/s to kt. */
   return ms * 1.94384449;
 }
 
-/* Converte metros para pés. */
+/* Converts metres to feet. */
 function metersToFeet(meters) {
-  /* Devolve null quando a altitude não vem no GPS. */
+  /* Returns null if altitude is missing. */
   if (meters === null || meters === undefined || Number.isNaN(meters)) return null;
 
-  /* Usa o factor de conversão de metros para pés. */
+  /* Converts metres to feet. */
   return meters * 3.280839895;
 }
 
-/* Calcula a média de uma lista de números. */
+/* Calculates an average. */
 function average(values) {
-  /* Devolve zero se a lista estiver vazia. */
-  if (values.length === 0) return 0;
+  /* Returns zero for empty arrays. */
+  if (!values.length) return 0;
 
-  /* Soma todos os valores. */
-  const total = values.reduce((sum, value) => sum + value, 0);
-
-  /* Divide pela quantidade de valores. */
-  return total / values.length;
+  /* Sums and divides. */
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-/* Formata números para a UI. */
+/* Smooths a numeric value. */
+function smoothValue(previous, next, weight) {
+  /* Uses the new value when previous is missing. */
+  if (previous === null || previous === undefined) return next;
+
+  /* Applies exponential smoothing. */
+  return previous * (1 - weight) + next * weight;
+}
+
+/* Calculates seconds between two ISO dates. */
+function secondsBetween(startIso, endIso) {
+  /* Returns zero if dates are missing. */
+  if (!startIso || !endIso) return 0;
+
+  /* Calculates positive seconds. */
+  return Math.max(0, (new Date(endIso).getTime() - new Date(startIso).getTime()) / 1000);
+}
+
+/* Formats a number for display. */
 function formatNumber(value, decimals) {
-  /* Devolve travessão quando o valor é null/undefined/NaN. */
+  /* Returns dash when missing. */
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
 
-  /* Formata o número com as casas decimais pedidas. */
+  /* Formats the value. */
   return Number(value).toFixed(decimals);
 }
 
-/* Arredonda valores para guardar/mostrar compacto. */
+/* Rounds a value for compact export/display. */
 function round(value, decimals) {
-  /* Devolve null quando o valor não existe. */
+  /* Returns null for missing values. */
   if (value === null || value === undefined || Number.isNaN(value)) return null;
 
-  /* Calcula o factor de arredondamento. */
+  /* Rounds to the requested precision. */
   const factor = 10 ** decimals;
-
-  /* Arredonda ao número de casas decimais. */
   return Math.round(value * factor) / factor;
 }
 
-/* Formata hora ISO para hora local curta. */
+/* Formats an ISO time as local time. */
 function formatTime(iso) {
-  /* Devolve travessão quando a hora não existe. */
+  /* Returns dash if missing. */
   if (!iso) return "—";
 
-  /* Converte ISO para objecto Date. */
-  const date = new Date(iso);
-
-  /* Formata a hora no locale português. */
-  return date.toLocaleTimeString("pt-PT", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  });
+  /* Formats in Portuguese 24-hour style. */
+  return new Date(iso).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-/* Escapa HTML para evitar inserir texto perigoso no DOM. */
+/* Formats seconds as HH:MM:SS. */
+function formatDuration(seconds) {
+  /* Normalizes seconds. */
+  const total = Math.max(0, Math.floor(seconds || 0));
+
+  /* Calculates components. */
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+
+  /* Returns padded duration. */
+  return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
+}
+
+/* Escapes HTML text. */
 function escapeHtml(value) {
-  /* Converte qualquer valor para texto. */
-  const text = String(value);
-
-  /* Substitui caracteres especiais por entidades HTML. */
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  /* Converts to string and escapes dangerous characters. */
+  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 }
 
-/* Abre a IndexedDB da aplicação. */
-function openDb() {
-  /* Devolve uma Promise para usar com async/await. */
-  return new Promise((resolve, reject) => {
-    /* Abre ou cria a base de dados local. */
-    const request = indexedDB.open("flight-data-recorder-db-v2", 1);
+/* Creates a deep JSON clone. */
+function clone(value) {
+  /* Uses structuredClone if available. */
+  if (typeof structuredClone === "function") return structuredClone(value);
 
-    /* Cria a store na primeira versão da base de dados. */
-    request.onupgradeneeded = () => {
-      const db = request.result;
-
-      /* Cria uma object store para pontos GPS, se ainda não existir. */
-      if (!db.objectStoreNames.contains("points")) {
-        db.createObjectStore("points", { keyPath: "id" });
-      }
-    };
-
-    /* Resolve com a ligação à base de dados quando abrir. */
-    request.onsuccess = () => resolve(request.result);
-
-    /* Rejeita a Promise se houver erro. */
-    request.onerror = () => reject(request.error);
-  });
-}
-
-/* Guarda um ponto GPS na IndexedDB. */
-async function savePointToDb(point) {
-  /* Abre a base de dados local. */
-  const db = await openDb();
-
-  /* Cria uma transacção de escrita. */
-  const tx = db.transaction("points", "readwrite");
-
-  /* Guarda o ponto na store. */
-  tx.objectStore("points").put(point);
-
-  /* Devolve uma Promise que termina quando a transacção fechar. */
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-
-  /* Fecha a ligação à base de dados. */
-  db.close();
-}
-
-/* Lê todos os pontos GPS guardados na IndexedDB. */
-async function getAllPointsFromDb() {
-  /* Abre a base de dados local. */
-  const db = await openDb();
-
-  /* Cria uma transacção de leitura. */
-  const tx = db.transaction("points", "readonly");
-
-  /* Pede todos os pontos guardados. */
-  const request = tx.objectStore("points").getAll();
-
-  /* Aguarda o resultado do pedido. */
-  const points = await new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-
-  /* Fecha a ligação à base de dados. */
-  db.close();
-
-  /* Ordena os pontos por timestamp antes de devolver. */
-  return points.sort((a, b) => a.timestampMs - b.timestampMs);
-}
-
-/* Apaga todos os pontos da IndexedDB. */
-async function clearPointsDb() {
-  /* Abre a base de dados local. */
-  const db = await openDb();
-
-  /* Cria uma transacção de escrita. */
-  const tx = db.transaction("points", "readwrite");
-
-  /* Limpa todos os pontos da store. */
-  tx.objectStore("points").clear();
-
-  /* Aguarda o fim da transacção. */
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-
-  /* Fecha a ligação à base de dados. */
-  db.close();
+  /* Falls back to JSON cloning. */
+  return JSON.parse(JSON.stringify(value));
 }

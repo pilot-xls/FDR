@@ -1,7 +1,7 @@
 {
-  "name": "Flight Data Recorder PWA",
-  "short_name": "Flight Logger",
-  "description": "PWA offline para registar fases de voo com GPS e consumo.",
+  "name": "Flight Data Recorder PWA v4",
+  "short_name": "Flight FDR",
+  "description": "PWA offline para registar sectores, flight time, GPS e consumo de combustível.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

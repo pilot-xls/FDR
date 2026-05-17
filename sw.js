@@ -1,73 +1,47 @@
-/*
-  Service worker da PWA.
-  Este ficheiro guarda os ficheiros principais em cache para a app abrir offline.
-*/
+/* Service worker for offline PWA support. */
 
-/* Define o nome da cache; muda este valor quando alterares ficheiros importantes. */
-const CACHE_NAME = "flight-data-recorder-v2";
+/* Defines the cache version for this release. */
+const CACHE_NAME = "flight-data-recorder-v4";
 
-/* Define os ficheiros que devem ficar disponíveis offline. */
-const APP_SHELL = [
-  "./",
-  "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./manifest.webmanifest",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png"
-];
+/* Defines the local files required to open the app offline. */
+const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
 
-/* Instala o service worker e guarda os ficheiros principais em cache. */
+/* Installs the service worker and caches the app shell. */
 self.addEventListener("install", (event) => {
-  /* Espera até todos os ficheiros serem guardados. */
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(APP_SHELL);
-    })
-  );
+  /* Opens cache and stores the app files. */
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
 
-  /* Activa o novo service worker mais depressa. */
+  /* Activates the new worker immediately. */
   self.skipWaiting();
 });
 
-/* Remove caches antigas quando uma nova versão fica activa. */
+/* Activates the worker and removes old caches. */
 self.addEventListener("activate", (event) => {
-  /* Limpa qualquer cache cujo nome já não seja o actual. */
-  event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)));
-    })
-  );
+  /* Deletes caches that do not match the current version. */
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))));
 
-  /* Garante que o service worker controla páginas abertas. */
+  /* Takes control of open clients. */
   self.clients.claim();
 });
 
-/* Intercepta pedidos e devolve cache quando possível. */
+/* Handles fetch requests for offline use. */
 self.addEventListener("fetch", (event) => {
-  /* Só trata pedidos GET, porque outros métodos não devem ser cacheados. */
+  /* Only handles GET requests. */
   if (event.request.method !== "GET") return;
 
-  /* Tenta rede primeiro e usa cache se a rede falhar. */
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        /* Guarda uma cópia da resposta na cache. */
-        const responseClone = response.clone();
+  /* Does not cache external airport lookup calls. */
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
 
-        /* Actualiza a cache em segundo plano. */
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
+  /* Uses network first and cache fallback. */
+  event.respondWith(fetch(event.request).then((response) => {
+    /* Copies the response for caching. */
+    const copy = response.clone();
 
-        /* Devolve a resposta da rede. */
-        return response;
-      })
-      .catch(() => {
-        /* Se estiver offline, tenta devolver resposta da cache. */
-        return caches.match(event.request).then((cached) => {
-          return cached || caches.match("./index.html");
-        });
-      })
-  );
+    /* Updates cache in the background. */
+    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+
+    /* Returns the live response. */
+    return response;
+  }).catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html"))));
 });
