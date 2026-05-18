@@ -861,7 +861,7 @@ function render() {
   ui.recordingBadge.className = state.isRecording ? "badge badge-ok" : "badge badge-muted";
 
   /* Updates sector heading. */
-  ui.sectorBadge.textContent = `Sector ${state.activeSector.number}`;
+  if (ui.sectorBadge) ui.sectorBadge.textContent = `Sector ${state.activeSector.number}`;
   ui.sectorName.textContent = state.activeSector.name;
   ui.sectorRoute.textContent = routeText(state.activeSector);
 
