@@ -24,191 +24,66 @@
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
 </head>
 <body>
-  <!-- Main app container. -->
   <main class="app-shell">
-    <!-- App header with title and recording badge. -->
-    <header class="topbar">
-      <div>
-        <!-- Small app category label. -->
-        <p class="eyebrow">CDU FMC theme</p>
-
-        <!-- Main app heading. -->
-        <h1>Flight Data Recorder FMC</h1>
+    <header class="topbar sticky-top">
+      <p class="eyebrow">PWA offline</p>
+      <h1>Flight Data Recorder</h1>
+      <div class="status-strip" aria-label="Live status">
+        <div><span>GPS</span><strong id="gpsStatus">Waiting</strong></div>
+        <div><span>Flight</span><strong id="flightStatus">—</strong></div>
+        <div><span>GS</span><strong><span id="speedKt">—</span> kt</strong></div>
+        <div><span>ALT</span><strong><span id="altitudeFt">—</span> ft</strong></div>
       </div>
-
-      <!-- Shows whether recording is active. -->
-      <span id="recordingBadge" class="badge badge-muted">Stopped</span>
     </header>
 
-    <!-- Main flight tab. -->
     <section id="tabFlight" class="tab-panel active">
-      <!-- Primary control card. -->
-      <section class="card">
-        <!-- Main action buttons. -->
-        <div class="controls">
-          <!-- Starts recording and creates blocks off. -->
-          <button id="startBtn" class="btn btn-primary">Start / Blocks off</button>
-
-          <!-- Stops recording and creates blocks on. -->
-          <button id="stopBtn" class="btn btn-secondary" disabled>Stop / Blocks on</button>
-
-          <!-- Deletes the active and saved sectors. -->
-          <button id="resetBtn" class="btn btn-danger">Reset all</button>
-        </div>
-
-        <!-- Operational limitation warning. -->
-        <p class="hint">Keep the app open and the screen awake for best reliability, especially on iPhone.</p>
-      </section>
-
-      <!-- Current sector summary. -->
       <section class="card sector-card">
         <div class="section-title">
-          <!-- Section heading. -->
           <h2>Current sector</h2>
-
-          <!-- Shows the active sector number. -->
-          <span id="sectorBadge" class="badge badge-muted">Sector 1</span>
+          <span id="recordingBadge" class="badge badge-muted">Stopped</span>
         </div>
-
-        <!-- Sector summary grid. -->
         <div class="sector-grid">
           <div>
-            <!-- Sector name label. -->
             <p class="metric-label">Sector name</p>
-
-            <!-- Active sector name. -->
             <h2 id="sectorName">Sector 1</h2>
-
-            <!-- Departure and destination line. -->
             <p id="sectorRoute" class="metric-small">Departure — · Destination —</p>
           </div>
-
           <div>
-            <!-- Flight-time label. -->
             <p class="metric-label">Flight time</p>
-
-            <!-- Airborne time from takeoff to landing. -->
             <h2 id="flightTime">00:00:00</h2>
-
-            <!-- Block time from blocks off to blocks on. -->
             <p id="blockTime" class="metric-small">Block time 00:00:00</p>
           </div>
         </div>
       </section>
 
-      <!-- Live GPS and flight metrics. -->
-      <section class="grid">
-        <!-- GPS status card. -->
-        <article class="card metric-card">
-          <p class="metric-label">GPS status</p>
-          <h2 id="gpsStatus">Waiting</h2>
-          <p id="gpsDetails" class="metric-small">No GPS points received.</p>
-        </article>
-
-        <!-- Flight phase card. -->
-        <article class="card metric-card">
-          <p class="metric-label">Flight status</p>
-          <h2 id="flightStatus">—</h2>
-          <p id="flightDetails" class="metric-small">Start recording to detect phases.</p>
-        </article>
-
-        <!-- Ground speed card. -->
-        <article class="card metric-card">
-          <p class="metric-label">Ground speed</p>
-          <h2><span id="speedKt">—</span> kt</h2>
-          <p id="speedMs" class="metric-small">— m/s</p>
-        </article>
-
-        <!-- Altitude card. -->
-        <article class="card metric-card">
-          <p class="metric-label">GPS altitude</p>
-          <h2><span id="altitudeFt">—</span> ft</h2>
-          <p id="verticalSpeed" class="metric-small">VS — ft/min</p>
-        </article>
-      </section>
-
-      <!-- Current sector phase log. -->
       <section class="card">
         <div class="section-title">
-          <!-- Current log title. -->
           <h2>Current sector log</h2>
-
-          <!-- Export buttons. -->
           <div class="row-actions">
-            <!-- Exports all sectors as CSV. -->
             <button id="exportCsvBtn" class="btn btn-small">Export CSV</button>
-
-            <!-- Exports all sectors as JSON. -->
             <button id="exportJsonBtn" class="btn btn-small">Export JSON</button>
           </div>
         </div>
-
-        <!-- Scrollable phase log table. -->
         <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Start Time</th>
-                <th>Consumption</th>
-                <th>Cumulative</th>
-              </tr>
-            </thead>
-            <tbody id="logTableBody"></tbody>
-          </table>
+          <table><thead><tr><th>Status</th><th>Start Time</th><th>Consumption</th><th>Cumulative</th></tr></thead><tbody id="logTableBody"></tbody></table>
         </div>
       </section>
 
-      <!-- Saved sectors summary. -->
       <section class="card">
         <div class="section-title">
-          <!-- Saved sectors heading. -->
           <h2>Saved sectors</h2>
-
-          <!-- Saved sector count. -->
           <span id="savedSectorCount" class="muted">0 saved</span>
         </div>
-
-        <!-- Saved sectors table. -->
         <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Sector</th>
-                <th>Name</th>
-                <th>Block time</th>
-                <th>Flight time</th>
-                <th>Fuel</th>
-              </tr>
-            </thead>
-            <tbody id="sectorsTableBody"></tbody>
-          </table>
+          <table><thead><tr><th>Sector</th><th>Name</th><th>Block time</th><th>Flight time</th><th>Fuel</th></tr></thead><tbody id="sectorsTableBody"></tbody></table>
         </div>
-      </section>
-
-      <!-- Last GPS points card. -->
-      <section class="card">
-        <div class="section-title">
-          <!-- GPS points heading. -->
-          <h2>Last GPS points</h2>
-
-          <!-- GPS point count. -->
-          <span id="pointCount" class="muted">0 points</span>
-        </div>
-
-        <!-- Last points JSON preview. -->
-        <pre id="lastPoints" class="log-box">No data.</pre>
       </section>
     </section>
 
-    <!-- Settings tab. -->
     <section id="tabSettings" class="tab-panel">
-      <!-- Detection and fuel settings card. -->
       <section class="card">
         <h2>Settings</h2>
-        <p class="hint">Adjust these values to your aircraft. These thresholds control when the app changes flight phase.</p>
-
-        <!-- Settings input grid. -->
+        <p class="hint">Adjust these values to your aircraft.</p>
         <div class="settings-grid">
           <label>Taxi speed threshold (kt)<input id="taxiMaxKt" type="number" min="1" step="1"></label>
           <label>Takeoff speed min (kt)<input id="takeoffSpeedKt" type="number" min="1" step="1"></label>
@@ -226,37 +101,21 @@
           <label>Fuel cruise (lb/h)<input id="fuelCruiseLbh" type="number" min="0" step="1"></label>
           <label>Fuel descent/approach (lb/h)<input id="fuelDescentApproachLbh" type="number" min="0" step="1"></label>
         </div>
-
-        <!-- Settings action buttons. -->
         <div class="controls settings-actions">
-          <!-- Saves settings locally. -->
           <button id="saveSettingsBtn" class="btn btn-primary">Save settings</button>
-
-          <!-- Restores default settings. -->
           <button id="defaultSettingsBtn" class="btn btn-secondary">Restore defaults</button>
         </div>
       </section>
-
-      <!-- Notes card. -->
-      <section class="card">
-        <h2>Algorithm notes</h2>
-        <p class="hint">Airport names are attempted online from coordinates. If that fails, the app asks for a manual sector name.</p>
-        <ul class="notes">
-          <li><strong>Flight time:</strong> from airborne/initial climb detection to landing detection.</li>
-          <li><strong>Block time:</strong> from blocks off to blocks on.</li>
-          <li><strong>Next sector:</strong> closes the current sector, saves it, and immediately starts the next one.</li>
-          <li><strong>Offline:</strong> GPS recording works offline, but online airport lookup does not.</li>
-        </ul>
-      </section>
     </section>
 
-    <!-- Fixed bottom navigation. -->
-    <nav class="bottom-nav" aria-label="Main navigation">
-      <!-- Opens Flight tab. -->
-      <button id="flightTabBtn" class="nav-btn active">Flight</button>
 
-      <!-- Opens Settings tab. -->
+    <div hidden>
+      <span id="gpsDetails"></span><span id="flightDetails"></span><span id="speedMs"></span><span id="verticalSpeed"></span><span id="pointCount"></span><pre id="lastPoints"></pre>
+    </div>
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <button id="flightTabBtn" class="nav-btn active">Flight</button>
       <button id="settingsTabBtn" class="nav-btn">Settings</button>
+      <button id="toggleRecordBtn" class="btn btn-primary btn-record">Start</button>
     </nav>
   </main>
 
