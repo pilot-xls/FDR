@@ -50,9 +50,7 @@ let state = loadState() || createInitialState();
 /* Stores UI element references. */
 const ui = {
   recordingBadge: document.getElementById("recordingBadge"),
-  startBtn: document.getElementById("startBtn"),
-  stopBtn: document.getElementById("stopBtn"),
-  resetBtn: document.getElementById("resetBtn"),
+  toggleRecordBtn: document.getElementById("toggleRecordBtn"),
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   exportJsonBtn: document.getElementById("exportJsonBtn"),
   sectorBadge: document.getElementById("sectorBadge"),
@@ -142,13 +140,7 @@ function createSector(number) {
 /* Wires events and renders the first view. */
 function init() {
   /* Starts recording when the start button is pressed. */
-  ui.startBtn.addEventListener("click", startRecording);
-
-  /* Stops the active sector when the stop button is pressed. */
-  ui.stopBtn.addEventListener("click", () => finalizeCurrentSector(false));
-
-  /* Deletes all local data when reset is pressed. */
-  ui.resetBtn.addEventListener("click", resetAll);
+  ui.toggleRecordBtn.addEventListener("click", toggleRecording);
 
   /* Exports CSV when pressed. */
   ui.exportCsvBtn.addEventListener("click", exportCsv);
@@ -182,6 +174,23 @@ function init() {
 
   /* Registers the service worker for offline use. */
   registerServiceWorker();
+}
+
+/* Toggles recording from the fixed bottom button. */
+async function toggleRecording() {
+  if (state.isRecording) {
+    await finalizeCurrentSector(false);
+    return;
+  }
+
+  const hasData = state.savedSectors.length > 0 || state.activeSector.points.length > 0 || state.activeSector.logs.length > 0 || state.activeSector.blockOffAt;
+  if (hasData) {
+    const confirmed = confirm("Start vai apagar o setor atual e os setores guardados. Continuar?");
+    if (!confirmed) return;
+  }
+
+  await resetAll(true);
+  await startRecording();
 }
 
 /* Starts GPS recording and creates blocks off/taxi. */
@@ -844,8 +853,8 @@ async function ensureSectorName(sector) {
 /* Renders the complete UI. */
 function render() {
   /* Updates buttons. */
-  ui.startBtn.disabled = state.isRecording;
-  ui.stopBtn.disabled = !state.isRecording;
+  ui.toggleRecordBtn.textContent = state.isRecording ? "Stop" : "Start";
+  ui.toggleRecordBtn.classList.toggle("is-stop", state.isRecording);
 
   /* Updates recording badge. */
   ui.recordingBadge.textContent = state.isRecording ? "Recording" : "Stopped";
@@ -1032,9 +1041,11 @@ function loadState() {
 }
 
 /* Deletes all local data. */
-async function resetAll() {
+async function resetAll(skipConfirm = false) {
   /* Asks for confirmation. */
-  if (!window.confirm("Delete all active and saved sectors from this device?")) return;
+  if (!skipConfirm) {
+    if (!window.confirm("Delete all active and saved sectors from this device?")) return;
+  }
 
   /* Stops GPS if needed. */
   await stopGpsOnly();
