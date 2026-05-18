@@ -478,6 +478,11 @@ function detectPhase(point) {
     next = "cruise";
   }
 
+  /* Detects step climb when climbing again after cruise level-off. */
+  if ((next === "cruise" || next === "TOC") && !state.hadTod && isTrendSustained("climb", settings.stableSeconds)) {
+    next = "climb";
+  }
+
   /* Detects top of descent after cruise. */
   if ((next === "cruise" || next === "TOC") && !state.hadTod && isTrendSustained("descent", settings.stableSeconds)) {
     next = "TOD";
@@ -508,6 +513,7 @@ function detectPhase(point) {
 
   /* Applies phase transition. */
   if (next !== current) {
+    if ((current === "cruise" || current === "TOC") && next === "climb") markLatestCruiseAsStepClimb(point.timeIso);
     setPhase(next, point.timeIso, point.timestampMs);
   }
 }
@@ -568,6 +574,21 @@ function enoughTimeInCurrentPhase(point, seconds) {
 
   /* Compares current point time with phase start. */
   return point.timestampMs - state.lastPhaseChangeMs >= seconds * 1000;
+}
+
+/* Converts the latest cruise segment to step climb when a new climb starts. */
+function markLatestCruiseAsStepClimb(endIso) {
+  /* Gets the latest log line. */
+  const log = state.activeSector.logs[state.activeSector.logs.length - 1];
+
+  /* Only re-labels an open cruise/TOC line. */
+  if (!log || log.endTime || !["cruise", "TOC"].includes(log.status)) return;
+
+  /* Closes and relabels this segment as step climb. */
+  log.endTime = endIso;
+  log.status = "step climb";
+  log.rateLbh = settings.fuelUntilTocLbh;
+  log.consumptionLb = calculateLogConsumption(log, endIso);
 }
 
 /* Adds a new phase to the current sector log. */
@@ -683,6 +704,9 @@ function calculateLogConsumption(log, fallbackEndIso) {
   /* Returns zero when times are missing. */
   if (!log.startTime || !endIso) return 0;
 
+  /* Taxi is fixed to 3.3 lb per taxi segment. */
+  if (log.status === "taxi") return 3.3;
+
   /* Calculates duration in hours. */
   const hours = secondsBetween(log.startTime, endIso) / 3600;
 
@@ -690,7 +714,7 @@ function calculateLogConsumption(log, fallbackEndIso) {
   const rate = Number(log.rateLbh ?? fuelRateForStatus(log.status));
 
   /* Returns fuel in pounds. */
-  return hours * rate;
+  return Math.max(0, hours * rate);
 }
 
 /* Returns the fuel rate for a phase. */
@@ -700,6 +724,9 @@ function fuelRateForStatus(status) {
 
   /* Descent side uses descent/approach fuel. */
   if (["TOD", "descent", "approach", "landing", "blocks on"].includes(status)) return settings.fuelDescentApproachLbh;
+
+  /* Step climb uses climb fuel. */
+  if (status === "step climb") return settings.fuelUntilTocLbh;
 
   /* Final taxi after landing uses descent/approach fuel. */
   if (status === "taxi" && state.hadLanding) return settings.fuelDescentApproachLbh;
@@ -872,14 +899,15 @@ function renderLogTable() {
 
   /* Shows an empty state. */
   if (state.activeSector.logs.length === 0) {
-    ui.logTableBody.innerHTML = '<tr><td colspan="3" class="muted">No phases recorded.</td></tr>';
+    ui.logTableBody.innerHTML = '<tr><td colspan="4" class="muted">No phases recorded.</td></tr>';
     return;
   }
 
   /* Renders each phase row. */
   for (const log of state.activeSector.logs) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td>${escapeHtml(log.status)}</td><td>${formatTime(log.startTime)}</td><td>${formatNumber(log.consumptionLb, 1)} lb</td>`;
+    const cumulativeFuel = state.activeSector.logs.slice(0, state.activeSector.logs.indexOf(log) + 1).reduce((sum, item) => sum + (Number(item.consumptionLb) || 0), 0);
+    row.innerHTML = `<td>${escapeHtml(log.status)}</td><td>${formatTime(log.startTime)}</td><td>${formatNumber(log.consumptionLb, 1)} lb</td><td>${formatNumber(cumulativeFuel, 1)} lb</td>`;
     ui.logTableBody.appendChild(row);
   }
 }
@@ -1031,13 +1059,15 @@ function exportCsv() {
   const sectors = exportableSectors();
 
   /* Defines CSV headers. */
-  const rows = [["sector_number", "sector_name", "departure", "destination", "status", "start_time", "end_time", "consumption_lb", "block_time", "flight_time", "total_fuel_lb"]];
+  const rows = [["sector_number", "sector_name", "departure", "destination", "status", "start_time", "end_time", "consumption_lb", "consumption_cumulative_lb", "block_time", "flight_time", "total_fuel_lb"]];
 
   /* Adds one row per phase. */
   for (const sector of sectors) {
     updateSectorTotals(sector);
     for (const log of sector.logs) {
-      rows.push([sector.number, sector.name, sector.departure?.icao || sector.departure?.iata || sector.departure?.name || "", sector.destination?.icao || sector.destination?.iata || sector.destination?.name || "", log.status, log.startTime, log.endTime || "", round(log.consumptionLb, 1), formatDuration(sector.totals.blockSeconds), formatDuration(sector.totals.flightSeconds), round(sector.totals.fuelLb, 1)]);
+      const idx = sector.logs.indexOf(log);
+      const cumulativeFuel = sector.logs.slice(0, idx + 1).reduce((sum, item) => sum + (Number(item.consumptionLb) || 0), 0);
+      rows.push([sector.number, sector.name, sector.departure?.icao || sector.departure?.iata || sector.departure?.name || "", sector.destination?.icao || sector.destination?.iata || sector.destination?.name || "", log.status, log.startTime, log.endTime || "", round(log.consumptionLb, 1), round(cumulativeFuel, 1), formatDuration(sector.totals.blockSeconds), formatDuration(sector.totals.flightSeconds), round(sector.totals.fuelLb, 1)]);
     }
   }
 
