@@ -713,11 +713,14 @@ function calculateLogConsumption(log, fallbackEndIso) {
   /* Returns zero when times are missing. */
   if (!log.startTime || !endIso) return 0;
 
-  /* Taxi is fixed to 3.3 lb per taxi segment. */
-  if (log.status === "taxi") return 3.3;
+  /* Calculates duration in minutes for taxi fuel. */
+  const minutes = secondsBetween(log.startTime, endIso) / 60;
+
+  /* Taxi uses 3.3 lb per minute. */
+  if (log.status === "taxi") return Math.max(0, minutes * 3.3);
 
   /* Calculates duration in hours. */
-  const hours = secondsBetween(log.startTime, endIso) / 3600;
+  const hours = minutes / 60;
 
   /* Uses the rate stored when the phase started. */
   const rate = Number(log.rateLbh ?? fuelRateForStatus(log.status));
