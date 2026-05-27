@@ -468,12 +468,12 @@ function detectPhase(point) {
   }
 
   /* Detects sustained climb. */
-  if (next === "initial climb" && isTrendSustained("climb", settings.stableSeconds)) {
+  if (next === "initial climb" && isTrendSustained("climb", settings.stableSeconds) && hasTrendMajority("climb", settings.stableSeconds)) {
     next = "climb";
   }
 
-  /* Detects top of climb when vertical speed becomes level. */
-  if (next === "climb" && !state.hadToc && isTrendSustained("level", settings.stableSeconds)) {
+  /* Detects top of climb (initial or step climb) when vertical speed becomes level. */
+  if (next === "climb" && isTrendSustained("level", settings.stableSeconds) && hasTrendMajority("level", settings.stableSeconds)) {
     next = "TOC";
     state.hadToc = true;
   }
@@ -483,13 +483,13 @@ function detectPhase(point) {
     next = "cruise";
   }
 
-  /* Detects step climb when climbing again after cruise level-off. */
-  if ((next === "cruise" || next === "TOC") && !state.hadTod && isTrendSustained("climb", settings.stableSeconds)) {
+  /* Detects step climb only after a stable cruise period. */
+  if (next === "cruise" && !state.hadTod && enoughTimeInCurrentPhase(point, Math.max(settings.stableSeconds, 30)) && isTrendSustained("climb", settings.stableSeconds) && hasTrendMajority("climb", settings.stableSeconds)) {
     next = "climb";
   }
 
   /* Detects top of descent after cruise. */
-  if ((next === "cruise" || next === "TOC") && !state.hadTod && isTrendSustained("descent", settings.stableSeconds)) {
+  if ((next === "cruise" || next === "TOC") && !state.hadTod && isTrendSustained("descent", settings.stableSeconds) && hasTrendMajority("descent", settings.stableSeconds)) {
     next = "TOD";
     state.hadTod = true;
   }
@@ -570,6 +570,35 @@ function isTrendSustained(type, seconds) {
 
   /* Unknown trend fails. */
   return false;
+}
+
+/* Checks whether a vertical-speed trend has majority support to reduce noise. */
+function hasTrendMajority(type, seconds, ratio = 0.7) {
+  /* Gets the latest point. */
+  const last = state.activeSector.points[state.activeSector.points.length - 1];
+
+  /* Fails if there is no latest point. */
+  if (!last) return false;
+
+  /* Defines the start of the analysis window. */
+  const minTime = last.timestampMs - seconds * 1000;
+
+  /* Filters recent points with valid vertical speed. */
+  const recent = state.activeSector.points.filter((p) => p.timestampMs >= minTime && p.verticalSpeedFpm !== null);
+
+  /* Requires enough samples. */
+  if (recent.length < 3) return false;
+
+  /* Counts samples that match the requested trend. */
+  const matching = recent.filter((p) => {
+    if (type === "climb") return p.verticalSpeedFpm >= settings.climbVsFpm;
+    if (type === "descent") return p.verticalSpeedFpm <= -settings.descentVsFpm;
+    if (type === "level") return Math.abs(p.verticalSpeedFpm) <= settings.cruiseVsBandFpm;
+    return false;
+  }).length;
+
+  /* Confirms that enough samples support the trend. */
+  return matching / recent.length >= ratio;
 }
 
 /* Checks if a phase has lasted long enough. */
