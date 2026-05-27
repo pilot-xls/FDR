@@ -1171,10 +1171,50 @@ async function releaseWakeLock() {
   wakeLock = null;
 }
 
+
+/* Requests an immediate one-shot GPS update after returning to foreground. */
+async function requestImmediatePositionUpdate() {
+  /* Exits when geolocation is unavailable. */
+  if (!("geolocation" in navigator)) return;
+
+  /* Exits when recording is not active. */
+  if (!state.isRecording) return;
+
+  /* Wraps getCurrentPosition into a Promise. */
+  await new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        await handlePosition(position);
+        resolve();
+      },
+      () => resolve(),
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000
+      }
+    );
+  });
+}
+
 /* Restores wake lock when returning to the visible page. */
 document.addEventListener("visibilitychange", async () => {
+  /* Exits when the page is hidden. */
+  if (document.visibilityState !== "visible") return;
+
   /* Requests wake lock again when visible and recording. */
-  if (state.isRecording && document.visibilityState === "visible") await requestWakeLock();
+  if (state.isRecording) await requestWakeLock();
+
+  /* Requests one immediate GPS sample to catch up phase detection. */
+  await requestImmediatePositionUpdate();
+
+  /* Refreshes elapsed times immediately after returning to the app. */
+  if (state.activeSector) {
+    updateSectorTotals(state.activeSector);
+    renderLogTable();
+    ui.flightTime.textContent = formatDuration(state.activeSector.totals.flightSeconds);
+    ui.blockTime.textContent = `Block time ${formatDuration(state.activeSector.totals.blockSeconds)}`;
+  }
 });
 
 /* Starts the one-second UI timer. */
