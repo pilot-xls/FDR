@@ -73,8 +73,7 @@ const ui = {
   lastPoints: document.getElementById("lastPoints"),
   tabFlight: document.getElementById("tabFlight"),
   tabSettings: document.getElementById("tabSettings"),
-  flightTabBtn: document.getElementById("flightTabBtn"),
-  settingsTabBtn: document.getElementById("settingsTabBtn"),
+  tabSwitchBtn: document.getElementById("tabSwitchBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   defaultSettingsBtn: document.getElementById("defaultSettingsBtn")
 };
@@ -148,11 +147,8 @@ function init() {
   /* Exports JSON when pressed. */
   ui.exportJsonBtn.addEventListener("click", exportJson);
 
-  /* Opens the flight tab. */
-  ui.flightTabBtn.addEventListener("click", () => setTab("flight"));
-
-  /* Opens the settings tab. */
-  ui.settingsTabBtn.addEventListener("click", () => setTab("settings"));
+  /* Alternates between flight and settings tabs. */
+  ui.tabSwitchBtn.addEventListener("click", toggleTab);
 
   /* Saves settings from the form. */
   ui.saveSettingsBtn.addEventListener("click", saveSettingsFromForm);
@@ -988,9 +984,17 @@ function setTab(tab) {
   ui.tabFlight.classList.toggle("active", isFlight);
   ui.tabSettings.classList.toggle("active", !isFlight);
 
-  /* Highlights active nav button. */
-  ui.flightTabBtn.classList.toggle("active", isFlight);
-  ui.settingsTabBtn.classList.toggle("active", !isFlight);
+  /* Updates the tab switch button label to show the destination page. */
+  ui.tabSwitchBtn.textContent = isFlight ? "Settings" : "Flight";
+}
+
+/* Alternates between the two main tabs. */
+function toggleTab() {
+  /* Checks whether the flight panel is currently visible. */
+  const isFlightVisible = ui.tabFlight.classList.contains("active");
+
+  /* Opens the opposite tab. */
+  setTab(isFlightVisible ? "settings" : "flight");
 }
 
 /* Loads settings from localStorage. */
